@@ -1,0 +1,14 @@
+# Secrets (repo is PUBLIC). Only SealedSecret manifests may be committed.
+.env
+.env.*
+*.pem
+*.key
+kubeconfig*
+*-secret.yaml
+*.secret.yaml
+!*-sealedsecret.yaml
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
