@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend
+spec:
+  # On the single k3s node this cannot be honoured during a drain (ADR 0001);
+  # it is kept to show intent and is proven on the multi-node OKE target.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
