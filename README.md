@@ -4,8 +4,8 @@ Source of truth for the demo cluster. ArgoCD watches this repo and syncs it to
 a single-node k3s cluster on OCI Always Free. Once ArgoCD runs, **nothing is
 applied by hand with kubectl**: change manifests here and let ArgoCD sync.
 
-> **Status:** scaffolding only. Manifests and ArgoCD Applications arrive in
-> Phase 2a.
+> **Status:** link-shortener base and k3s overlay only (Deployment, Service,
+> PDB). Ingress, Postgres, ArgoCD Applications and the OKE overlay come next.
 
 Part of a three-repo project. Architecture, ADRs and the issue tracker live in
 [oci-k8s-gitops-demo](https://github.com/Sandeep-RN/oci-k8s-gitops-demo);
@@ -16,7 +16,7 @@ application code and CI live in
 
 ```
 apps/<name>/base         Kustomize base (Deployment, Service, ConfigMap, SealedSecret)
-apps/<name>/overlays/prod  Environment overlay
+apps/<name>/overlays/k3s   Always Free k3s node (overlays/oke for the short-lived OKE target, ADR 0015)
 argocd/                  ArgoCD bootstrap and app-of-apps
 monitoring/              Prometheus / Grafana configuration
 ```

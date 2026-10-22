@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: link-shortener
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml
+# CI's tag-bump PR changes newTag to the git SHA. Do not edit it by hand.
+images:
+  - name: ghcr.io/sandeep-rn/oci-k8s-gitops-demo-app-backend
+    newTag: bd0b09b17bd8c76d5e95e9294a28d882a2340f94 # first image, set once to bootstrap

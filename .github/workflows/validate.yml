@@ -1,0 +1,49 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      # sha256 of kubeconform-linux-amd64.tar.gz from the release's CHECKSUMS file
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+      K8S_VERSION: 1.31.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install kubeconform (checksum verified)
+        run: |
+          curl -fsSL -o kc.tgz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kc.tgz" | sha256sum -c -
+          tar -xzf kc.tgz kubeconform
+
+      # Render every overlay exactly as ArgoCD would, then check the result
+      # against the Kubernetes schemas. A broken overlay fails here, not in the cluster.
+      - name: Render and validate overlays
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          overlays=(apps/*/overlays/*/)
+          [ ${#overlays[@]} -gt 0 ] || { echo "no overlays found"; exit 1; }
+          for dir in "${overlays[@]}"; do
+            echo "::group::${dir}"
+            kubectl kustomize "${dir}" | ./kubeconform -strict -summary -kubernetes-version "${K8S_VERSION}" -
+            echo "::endgroup::"
+          done
+
+      - name: Reject plain Secrets
+        run: |
+          set -euo pipefail
+          # Only SealedSecrets may be committed (ADR 0006).
+          if grep -rEl --include='*.yaml' --include='*.yml' '^kind: Secret$' apps argocd monitoring 2>/dev/null; then
+            echo "plain Secret manifest found; use a SealedSecret"; exit 1
+          fi
