@@ -1,0 +1,14 @@
+# Exposed through the one Always Free Flexible Load Balancer (10 Mbps).
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  annotations:
+    service.beta.kubernetes.io/oci-load-balancer-shape: "flexible"
+    service.beta.kubernetes.io/oci-load-balancer-shape-flex-min: "10"
+    service.beta.kubernetes.io/oci-load-balancer-shape-flex-max: "10"
+    # Terraform already opens LB -> NodePort/health-check rules. "None" stops the
+    # cloud controller from editing security lists, which would drift Terraform.
+    service.beta.kubernetes.io/oci-load-balancer-security-list-management-mode: "None"
+spec:
+  type: LoadBalancer

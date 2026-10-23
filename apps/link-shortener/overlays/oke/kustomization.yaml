@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Short-lived multi-node OKE target (ADR 0015).
+resources:
+  - ../../base
+patches:
+  - path: service-loadbalancer.yaml
+  # Two nodes in different fault domains: require one pod per node, so a node
+  # drain exercises the PDB for real (it cannot on single-node k3s, ADR 0001).
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints/0/whenUnsatisfiable
+        value: DoNotSchedule
