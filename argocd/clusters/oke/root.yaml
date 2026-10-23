@@ -1,0 +1,23 @@
+# The ONE manual apply for this cluster (after argocd/install). Everything in
+# apps/ is then created and kept in sync by ArgoCD ("app of apps").
+#   kubectl apply -f argocd/clusters/oke/root.yaml
+# No resources finalizer on purpose: deleting the root must not cascade-delete
+# every app it created.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-oke
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+    targetRevision: main
+    path: argocd/clusters/oke/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

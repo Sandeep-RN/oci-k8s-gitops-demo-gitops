@@ -26,17 +26,33 @@ jobs:
           echo "${KUBECONFORM_SHA256}  kc.tgz" | sha256sum -c -
           tar -xzf kc.tgz kubeconform
 
-      # Render every overlay exactly as ArgoCD would, then check the result
-      # against the Kubernetes schemas. A broken overlay fails here, not in the cluster.
-      - name: Render and validate overlays
+      # Render every overlay and the ArgoCD install exactly as ArgoCD would, then
+      # check the result against the Kubernetes schemas plus the community CRD
+      # catalog (for Application/AppProject). A broken manifest fails here, not
+      # in the cluster.
+      - name: Render and validate
+        env:
+          CRD_SCHEMAS: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
         run: |
           set -euo pipefail
           shopt -s nullglob
-          overlays=(apps/*/overlays/*/)
-          [ ${#overlays[@]} -gt 0 ] || { echo "no overlays found"; exit 1; }
-          for dir in "${overlays[@]}"; do
+          # CustomResourceDefinition has no published schema; the only CRDs here
+          # are ArgoCD's own, taken unmodified from the pinned upstream install.
+          kc_args=(-strict -summary -kubernetes-version "${K8S_VERSION}"
+                   -schema-location default -schema-location "${CRD_SCHEMAS}"
+                   -skip CustomResourceDefinition)
+          kc() { ./kubeconform "${kc_args[@]}" "$@"; }
+          dirs=(apps/*/overlays/*/ argocd/install/)
+          [ ${#dirs[@]} -gt 1 ] || { echo "no overlays found"; exit 1; }
+          for dir in "${dirs[@]}"; do
             echo "::group::${dir}"
-            kubectl kustomize "${dir}" | ./kubeconform -strict -summary -kubernetes-version "${K8S_VERSION}" -
+            kubectl kustomize "${dir}" | kc -
+            echo "::endgroup::"
+          done
+          # Per-cluster roots and Applications are plain files, not kustomizations.
+          for dir in argocd/clusters/*/; do
+            echo "::group::${dir}"
+            kc "${dir}"
             echo "::endgroup::"
           done
 

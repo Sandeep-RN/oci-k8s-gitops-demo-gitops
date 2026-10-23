@@ -4,8 +4,8 @@ Source of truth for the demo cluster. ArgoCD watches this repo and syncs it to
 a single-node k3s cluster on OCI Always Free. Once ArgoCD runs, **nothing is
 applied by hand with kubectl**: change manifests here and let ArgoCD sync.
 
-> **Status:** link-shortener base and k3s overlay only (Deployment, Service,
-> PDB). Ingress, Postgres, ArgoCD Applications and the OKE overlay come next.
+> **Status:** link-shortener base, k3s and OKE overlays, ArgoCD bootstrap for
+> the OKE target. Ingress, Postgres and the k3s cluster root come next.
 
 Part of a three-repo project. Architecture, ADRs and the issue tracker live in
 [oci-k8s-gitops-demo](https://github.com/Sandeep-RN/oci-k8s-gitops-demo);
@@ -15,11 +15,25 @@ application code and CI live in
 ## Layout
 
 ```
-apps/<name>/base         Kustomize base (Deployment, Service, ConfigMap, SealedSecret)
-apps/<name>/overlays/k3s   Always Free k3s node (overlays/oke for the short-lived OKE target, ADR 0015)
-argocd/                  ArgoCD bootstrap and app-of-apps
-monitoring/              Prometheus / Grafana configuration
+apps/<name>/base               Kustomize base (Deployment, Service, PDB)
+apps/<name>/overlays/k3s       Always Free k3s node
+apps/<name>/overlays/oke       Short-lived OKE target (ADR 0015): Flexible LB, strict spread
+argocd/install                 ArgoCD, pinned upstream install (ArgoCD manages itself from here)
+argocd/clusters/<cluster>/     root.yaml (app of apps) + apps/ (AppProject, Applications)
+monitoring/                    Prometheus / Grafana configuration
 ```
+
+## Bootstrap a cluster (the only manual kubectl, once per cluster)
+
+```
+kubectl apply --server-side -k argocd/install
+kubectl apply -f argocd/clusters/oke/root.yaml
+```
+
+After that, every change, including ArgoCD upgrades, is a PR to this repo.
+`--server-side` is required because ArgoCD's CRDs are too large for
+client-side apply. The ArgoCD UI is reached only by `kubectl port-forward`
+(ADR 0014).
 
 ## How changes flow
 

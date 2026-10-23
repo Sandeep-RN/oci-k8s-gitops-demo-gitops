@@ -1,0 +1,19 @@
+# Workload apps are limited to this repo and their own namespaces, instead of
+# the unrestricted "default" project. Created before the apps (sync wave -1).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: demo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: Link shortener demo workloads
+  sourceRepos:
+    - https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: link-shortener
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
