@@ -20,6 +20,7 @@ apps/<name>/overlays/k3s       Always Free k3s node
 apps/<name>/overlays/oke       Short-lived OKE target (ADR 0015): Flexible LB, strict spread
 argocd/install                 ArgoCD, pinned upstream install (ArgoCD manages itself from here)
 argocd/clusters/<cluster>/     root.yaml (app of apps) + apps/ (AppProject, Applications)
+platform/<addon>/              cluster add-ons shared by all clusters (sealed-secrets, pinned)
 monitoring/                    Prometheus / Grafana configuration
 ```
 
