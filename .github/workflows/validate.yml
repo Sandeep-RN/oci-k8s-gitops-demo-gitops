@@ -20,6 +20,9 @@ jobs:
       HELM_VERSION: v4.3.0
       # sha256 of helm-<version>-linux-amd64.tar.gz from get.helm.sh
       HELM_SHA256: 86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
+      PROMETHEUS_VERSION: 3.15.0
+      # sha256 of prometheus-<version>.linux-amd64.tar.gz from the release's sha256sums.txt
+      PROMETHEUS_SHA256: 2a542df32eac02ee17b9d844fb2aa1de00dafa5476579ba8a3ba862e9d572ea0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -84,6 +87,18 @@ jobs:
               echo "::endgroup::"
             done
           done
+
+      - name: Test alerting rules (promtool)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o prom.tgz "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          echo "${PROMETHEUS_SHA256}  prom.tgz" | sha256sum -c -
+          tar -xzf prom.tgz --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          # A PrometheusRule's .spec is a plain Prometheus rules file. Extract it
+          # so promtool can lint it and run the unit tests next to it.
+          yq '.spec' apps/link-shortener/base/slo-rules.yaml > tests/prometheus/slo-redirect.rules.yaml
+          ./promtool check rules tests/prometheus/slo-redirect.rules.yaml
+          ./promtool test rules tests/prometheus/*.test.yaml
 
       - name: Reject plain Secrets
         run: |

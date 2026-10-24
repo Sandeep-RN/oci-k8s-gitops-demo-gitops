@@ -1,0 +1,141 @@
+# Redirect SLO (ADR 0008), over a rolling 7 days:
+#   availability: 99.5% of redirects (GET /{code}) are not 5xx. A 404 for an
+#                 unknown code is a correct answer, so it counts as good.
+#   latency:      95% of non-5xx redirects finish in under 200 ms. 5xx are left
+#                 out so a failure isn't counted twice (as an error and as slow).
+#
+# Alerts are multi-window, multi-burn-rate (Google SRE workbook, ch. 5) on the
+# availability SLI. Burn rate = error ratio / 0.005 (the budget rate). Against
+# the 7-day window: 14.4x for 1h spends 8.6% of the budget, 6x for 6h 21%.
+# Each alert needs the short window too, so it stops soon after recovery.
+#
+# Traffic floor: an alert needs at least 20 redirects in its long window. With
+# demo-level traffic, one failure in three requests is a 33% error ratio, but
+# not a reason to page anyone.
+#
+# Tests: tests/prometheus/slo-redirect.test.yaml (promtool, run in CI).
+# Names here are used by the dashboard and the runbook; rename with care.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: slo-redirect
+spec:
+  groups:
+    - name: slo-redirect-recording
+      rules:
+        # Requests per second on the redirect route, per window.
+        - record: slo:redirect_requests:rate5m
+          expr: sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[5m]))
+        - record: slo:redirect_requests:rate1h
+          expr: sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[1h]))
+        - record: slo:redirect_requests:rate6h
+          expr: sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[6h]))
+        - record: slo:redirect_requests:rate1d
+          expr: sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[1d]))
+        - record: slo:redirect_requests:rate3d
+          expr: sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[3d]))
+
+        # Error ratio per window. "or vector(0)": with no 5xx series at all the
+        # numerator would be empty and so would the ratio; this makes it 0.
+        - record: slo:redirect_errors:ratio_rate5m
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status=~"5.."}[5m])) or vector(0))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[5m]))
+        - record: slo:redirect_errors:ratio_rate30m
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status=~"5.."}[30m])) or vector(0))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[30m]))
+        - record: slo:redirect_errors:ratio_rate1h
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status=~"5.."}[1h])) or vector(0))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[1h]))
+        - record: slo:redirect_errors:ratio_rate2h
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status=~"5.."}[2h])) or vector(0))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[2h]))
+        - record: slo:redirect_errors:ratio_rate6h
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status=~"5.."}[6h])) or vector(0))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[6h]))
+        - record: slo:redirect_errors:ratio_rate1d
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status=~"5.."}[1d])) or vector(0))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[1d]))
+        - record: slo:redirect_errors:ratio_rate3d
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status=~"5.."}[3d])) or vector(0))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[3d]))
+        - record: slo:redirect_errors:ratio_rate7d
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status=~"5.."}[7d])) or vector(0))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}"}[7d]))
+
+        # Share of the 7-day error budget still unspent (1 = untouched, below 0 = SLO missed).
+        - record: slo:redirect_error_budget:remaining_ratio7d
+          expr: 1 - slo:redirect_errors:ratio_rate7d / 0.005
+
+        # Latency SLI: share of non-5xx redirects under 200 ms (the le="0.2" bucket).
+        - record: slo:redirect_latency_good:ratio_rate5m
+          expr: |
+            sum(rate(http_request_duration_seconds_bucket{namespace="link-shortener",route="/{code}",status!~"5..",le="0.2"}[5m]))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status!~"5.."}[5m]))
+        - record: slo:redirect_latency_good:ratio_rate1h
+          expr: |
+            sum(rate(http_request_duration_seconds_bucket{namespace="link-shortener",route="/{code}",status!~"5..",le="0.2"}[1h]))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status!~"5.."}[1h]))
+        - record: slo:redirect_latency_good:ratio_rate7d
+          expr: |
+            sum(rate(http_request_duration_seconds_bucket{namespace="link-shortener",route="/{code}",status!~"5..",le="0.2"}[7d]))
+            / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status!~"5.."}[7d]))
+
+    - name: slo-redirect-alerts
+      rules:
+        - alert: RedirectErrorBudgetBurnFast
+          expr: |
+            slo:redirect_errors:ratio_rate1h > (14.4 * 0.005)
+            and slo:redirect_errors:ratio_rate5m > (14.4 * 0.005)
+            and slo:redirect_requests:rate1h * 3600 >= 20
+          for: 2m
+          labels:
+            severity: critical
+            slo: redirect-availability
+          annotations:
+            summary: Redirects are failing fast enough to exhaust the 7-day error budget in under 12 hours.
+            description: More than 7.2% of redirects returned 5xx over both the last hour and the last 5 minutes (14.4x the 0.5% budget rate).
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+
+        - alert: RedirectErrorBudgetBurnSlow
+          expr: |
+            slo:redirect_errors:ratio_rate6h > (6 * 0.005)
+            and slo:redirect_errors:ratio_rate30m > (6 * 0.005)
+            and slo:redirect_requests:rate6h * 21600 >= 20
+          for: 15m
+          labels:
+            severity: critical
+            slo: redirect-availability
+          annotations:
+            summary: Redirects are failing fast enough to exhaust the 7-day error budget in about a day.
+            description: More than 3% of redirects returned 5xx over both the last 6 hours and the last 30 minutes (6x the 0.5% budget rate).
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+
+        - alert: RedirectErrorBudgetBurnTicket
+          expr: |
+            (
+              slo:redirect_errors:ratio_rate1d > (3 * 0.005)
+              and slo:redirect_errors:ratio_rate2h > (3 * 0.005)
+              and slo:redirect_requests:rate1d * 86400 >= 20
+            )
+            or
+            (
+              slo:redirect_errors:ratio_rate3d > 0.005
+              and slo:redirect_errors:ratio_rate6h > 0.005
+              and slo:redirect_requests:rate3d * 259200 >= 20
+            )
+          for: 1h
+          labels:
+            severity: warning
+            slo: redirect-availability
+          annotations:
+            summary: Redirect errors are using the 7-day error budget faster than it refills.
+            description: Errors stayed above the budget rate for hours (more than 3x over 1 day and 2 hours, or more than 1x over 3 days and 6 hours). Not urgent; look within working hours.
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md

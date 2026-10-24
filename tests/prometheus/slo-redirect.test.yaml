@@ -1,0 +1,150 @@
+# promtool unit tests for the redirect SLO rules (ADR 0008).
+# CI extracts .spec of apps/link-shortener/base/slo-rules.yaml into
+# slo-redirect.rules.yaml (git-ignored) and runs:
+#   promtool test rules tests/prometheus/slo-redirect.test.yaml
+#
+# Series are cumulative counters sampled every minute. "0+60x180" means 60 more
+# requests each minute (1 per second) for 180 minutes.
+rule_files:
+  - slo-redirect.rules.yaml
+
+evaluation_interval: 30s
+
+tests:
+  # Healthy: no errors. No alert, error ratio 0 (not empty), full budget left.
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status="302"}'
+        values: '0+60x180'
+      - series: 'http_request_duration_seconds_bucket{namespace="link-shortener",route="/{code}",status="302",le="0.2"}'
+        values: '0+57x180'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: RedirectErrorBudgetBurnFast
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: RedirectErrorBudgetBurnSlow
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: RedirectErrorBudgetBurnTicket
+        exp_alerts: []
+    promql_expr_test:
+      - expr: slo:redirect_errors:ratio_rate1h
+        eval_time: 3h
+        exp_samples:
+          - labels: 'slo:redirect_errors:ratio_rate1h'
+            value: 0
+      - expr: slo:redirect_error_budget:remaining_ratio7d
+        eval_time: 3h
+        exp_samples:
+          - labels: 'slo:redirect_error_budget:remaining_ratio7d'
+            value: 1
+      # 57 of every 60 requests are under 200 ms.
+      - expr: round(slo:redirect_latency_good:ratio_rate1h, 0.001)
+        eval_time: 3h
+        exp_samples:
+          - labels: '{}'
+            value: 0.95
+
+  # Hard outage: 10% of redirects fail (above the 7.2% fast-burn threshold).
+  # The fast alert fires within minutes; the slow one only after its 15m "for".
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status="302"}'
+        values: '0+54x60'
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status="503"}'
+        values: '0+6x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedirectErrorBudgetBurnFast
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: redirect-availability
+            exp_annotations: &fast_annotations
+              summary: Redirects are failing fast enough to exhaust the 7-day error budget in under 12 hours.
+              description: More than 7.2% of redirects returned 5xx over both the last hour and the last 5 minutes (14.4x the 0.5% budget rate).
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+      - eval_time: 10m
+        alertname: RedirectErrorBudgetBurnSlow
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: RedirectErrorBudgetBurnSlow
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: redirect-availability
+            exp_annotations: &slow_annotations
+              summary: Redirects are failing fast enough to exhaust the 7-day error budget in about a day.
+              description: More than 3% of redirects returned 5xx over both the last 6 hours and the last 30 minutes (6x the 0.5% budget rate).
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+
+  # Slow burn: 4% errors. Below the fast threshold (7.2%), above the slow one
+  # (3%) and the ticket one (1.5%).
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status="302"}'
+        values: '0+96x240'
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status="503"}'
+        values: '0+4x240'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RedirectErrorBudgetBurnFast
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: RedirectErrorBudgetBurnSlow
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: redirect-availability
+            exp_annotations: *slow_annotations
+      - eval_time: 30m
+        alertname: RedirectErrorBudgetBurnTicket
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: RedirectErrorBudgetBurnTicket
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: redirect-availability
+            exp_annotations:
+              summary: Redirect errors are using the 7-day error budget faster than it refills.
+              description: Errors stayed above the budget rate for hours (more than 3x over 1 day and 2 hours, or more than 1x over 3 days and 6 hours). Not urgent; look within working hours.
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+
+  # Low traffic: a few requests an hour, a third of them failing. The ratio is
+  # huge but the sample is too small to page anyone (fewer than 20 requests).
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status="302"}'
+        values: '0+0.05x120'
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status="503"}'
+        values: '0+0.03x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: RedirectErrorBudgetBurnFast
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: RedirectErrorBudgetBurnSlow
+        exp_alerts: []
+
+  # Only the redirect route counts: failing link creation (POST /api/links) and
+  # probe endpoints are outside this SLO.
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status="302"}'
+        values: '0+60x60'
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/api/links",status="503"}'
+        values: '0+60x60'
+      - series: 'http_request_duration_seconds_count{namespace="link-shortener",route="/readyz",status="503"}'
+        values: '0+12x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RedirectErrorBudgetBurnFast
+        exp_alerts: []
+    promql_expr_test:
+      - expr: slo:redirect_errors:ratio_rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'slo:redirect_errors:ratio_rate5m'
+            value: 0
