@@ -1,0 +1,16 @@
+# A separate Service for metrics only. The "backend" Service becomes the public
+# load balancer on OKE; adding the metrics port there would publish /metrics.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-metrics
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/component: metrics
+spec:
+  selector:
+    app.kubernetes.io/name: backend
+  ports:
+    - name: metrics
+      port: 9000
+      targetPort: metrics

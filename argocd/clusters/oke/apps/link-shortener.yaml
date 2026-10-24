@@ -19,3 +19,11 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    # The ServiceMonitor needs the monitoring CRDs. On a fresh cluster this app
+    # can sync before they exist; retrying lets it succeed once they do.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

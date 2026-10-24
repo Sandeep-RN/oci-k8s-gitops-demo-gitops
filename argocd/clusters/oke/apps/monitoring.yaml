@@ -1,0 +1,42 @@
+# Prometheus, Alertmanager and Grafana (kube-prometheus-stack, ADR 0008).
+# Three sources: the pinned upstream chart, this repo as the source of the
+# values files ($values), and this repo's monitoring/oke for objects the chart
+# does not create (the Grafana admin SealedSecret).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  annotations:
+    # Before workload apps: their ServiceMonitors need the CRDs this installs.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  # "default", not "demo": the chart installs CRDs and ClusterRoles.
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      # Pinned; CI renders this exact version with the values below.
+      targetRevision: 92.3.0
+      helm:
+        releaseName: kps
+        valueFiles:
+          - $values/monitoring/kube-prometheus-stack/values.yaml
+          - $values/monitoring/kube-prometheus-stack/values-oke.yaml
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      path: monitoring/oke
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The operator's CRDs exceed the client-side apply annotation size limit.
+      - ServerSideApply=true
