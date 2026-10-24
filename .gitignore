@@ -2,6 +2,8 @@
 .env
 .env.*
 *.pem
+# Exception: Sealed Secrets PUBLIC certificates (encrypt-only, safe to publish).
+!argocd/clusters/*/sealed-secrets-cert.pem
 *.key
 kubeconfig*
 *-secret.yaml
