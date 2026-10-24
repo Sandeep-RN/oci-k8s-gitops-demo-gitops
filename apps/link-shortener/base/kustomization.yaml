@@ -12,4 +12,4 @@ resources:
 # CI's tag-bump PR changes newTag to the git SHA. Do not edit it by hand.
 images:
   - name: ghcr.io/sandeep-rn/oci-k8s-gitops-demo-app-backend
-    newTag: 8ec9f5be65c213267cca4ca935877ee0d95c7d2d
+    newTag: 76adfeb61ddc7ac2f9a43d7e8ae531ef0a420ac8
