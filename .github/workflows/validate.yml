@@ -17,6 +17,9 @@ jobs:
       # sha256 of kubeconform-linux-amd64.tar.gz from the release's CHECKSUMS file
       KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
       K8S_VERSION: 1.31.0
+      HELM_VERSION: v4.3.0
+      # sha256 of helm-<version>-linux-amd64.tar.gz from get.helm.sh
+      HELM_SHA256: 86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -25,6 +28,12 @@ jobs:
           curl -fsSL -o kc.tgz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
           echo "${KUBECONFORM_SHA256}  kc.tgz" | sha256sum -c -
           tar -xzf kc.tgz kubeconform
+
+      - name: Install Helm (checksum verified)
+        run: |
+          curl -fsSL -o helm.tgz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_SHA256}  helm.tgz" | sha256sum -c -
+          tar -xzf helm.tgz --strip-components=1 linux-amd64/helm
 
       # Render every overlay and the ArgoCD install exactly as ArgoCD would, then
       # check the result against the Kubernetes schemas plus the community CRD
@@ -43,6 +52,8 @@ jobs:
                    -skip CustomResourceDefinition)
           kc() { ./kubeconform "${kc_args[@]}" "$@"; }
           dirs=(apps/*/overlays/*/ argocd/install/ platform/*/)
+          # monitoring/ also holds Helm values folders, which are not kustomizations.
+          for k in monitoring/*/kustomization.yaml; do dirs+=("$(dirname "$k")/"); done
           [ ${#dirs[@]} -gt 1 ] || { echo "no overlays found"; exit 1; }
           for dir in "${dirs[@]}"; do
             echo "::group::${dir}"
@@ -54,6 +65,24 @@ jobs:
             echo "::group::${dir}"
             kc "${dir}"
             echo "::endgroup::"
+          done
+          # Helm sources in Applications: render the pinned chart with the same
+          # value files ArgoCD uses ($values/ points at this repo), so a bad
+          # values file fails here rather than at sync time.
+          for app in argocd/clusters/*/apps/*.yaml; do
+            n=$(yq '[.spec.sources[]? | select(.chart)] | length' "$app")
+            for ((i = 0; i < n; i++)); do
+              q() { yq "[.spec.sources[] | select(.chart)][$i] | $1" "$app"; }
+              values=()
+              while IFS= read -r f; do
+                [ -n "$f" ] && values+=(-f "${f#\$values/}")
+              done < <(q '.helm.valueFiles[]?')
+              echo "::group::${app}: $(q .chart) $(q .targetRevision)"
+              ./helm template "$(q .helm.releaseName)" "$(q .chart)" \
+                --repo "$(q .repoURL)" --version "$(q .targetRevision)" \
+                --namespace "$(yq .spec.destination.namespace "$app")" "${values[@]}" | kc -
+              echo "::endgroup::"
+            done
           done
 
       - name: Reject plain Secrets

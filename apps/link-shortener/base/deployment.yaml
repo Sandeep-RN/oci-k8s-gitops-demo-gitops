@@ -51,6 +51,10 @@ spec:
           ports:
             - name: http
               containerPort: 8000
+            # Prometheus metrics (the app's METRICS_PORT default). Reached only
+            # through the backend-metrics ClusterIP Service, never the LB.
+            - name: metrics
+              containerPort: 9000
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

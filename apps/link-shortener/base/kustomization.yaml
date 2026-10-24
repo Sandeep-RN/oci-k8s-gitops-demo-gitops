@@ -5,6 +5,8 @@ resources:
   - namespace.yaml
   - deployment.yaml
   - service.yaml
+  - metrics-service.yaml
+  - servicemonitor.yaml
   - pdb.yaml
   - configmap.yaml
   - postgres-service.yaml

@@ -1,0 +1,77 @@
+# kube-prometheus-stack values shared by every cluster (ADR 0008).
+# Cluster-specific values (storage, control-plane scraping) live in
+# values-<cluster>.yaml, layered on top by the cluster's ArgoCD Application.
+# Chart version is pinned in argocd/clusters/<cluster>/apps/monitoring.yaml.
+
+# Short resource names (kps-prometheus, kps-grafana, ...) instead of the
+# truncated "kube-prometheus-stack-..." defaults.
+fullnameOverride: kps
+
+prometheusOperator:
+  # The admission webhook's certificate is created by Helm hook Jobs, which
+  # fit ArgoCD poorly (they re-run and drift). PrometheusRules get checked in
+  # CI with promtool instead (added with the SLO rules). The operator's own TLS
+  # uses that same certificate, so it is turned off with it; the operator is
+  # reached only inside the cluster.
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+prometheus:
+  prometheusSpec:
+    # ADR 0008: a rolling 7-day SLO needs 7 days of data, plus a day of margin.
+    retention: 8d
+    # Drop the oldest data before the volume fills, whatever the retention says.
+    retentionSize: 40GB
+    # Select every ServiceMonitor/PodMonitor/PrometheusRule in the cluster,
+    # not only those labelled with this Helm release. Apps keep their scrape
+    # config next to their own manifests (apps/*/base) without knowing the
+    # release name.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { memory: 1536Mi }
+
+alertmanager:
+  # Receivers (Discord) come in a later change; until then the chart's default
+  # config sends everything to a "null" receiver.
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+
+grafana:
+  # Fixed credentials from a SealedSecret (monitoring/<cluster>/). Without it the
+  # chart generates a random password on every render, which ArgoCD re-renders
+  # on every sync: the app would never settle and the password would rotate.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # Dashboards come from Git (ConfigMaps picked up by the sidecar), so Grafana
+  # itself needs no volume.
+  persistence:
+    enabled: false
+  # A Helm test Pod; ArgoCD does not run Helm tests, so it would only linger.
+  testFramework:
+    enabled: false
+  resources:
+    requests: { cpu: 25m, memory: 128Mi }
+    limits: { memory: 384Mi }
+
+kube-state-metrics:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits: { memory: 64Mi }

@@ -1,0 +1,15 @@
+# Tells Prometheus to scrape the backend pods' metrics port. The SLO rules
+# depend on http_request_duration_seconds from here (ADR 0008).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+      app.kubernetes.io/component: metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

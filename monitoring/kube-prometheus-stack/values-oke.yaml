@@ -1,0 +1,26 @@
+# OKE overrides on top of values.yaml.
+
+# OKE's control plane is managed by Oracle: the scheduler, controller manager
+# and etcd are not reachable from the workers. Scraping them would only produce
+# permanent TargetDown alerts. (kube-proxy runs on the workers and serves
+# metrics on 0.0.0.0:10249, so it stays enabled.)
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # A 50 GB OCI block volume (the smallest size). It is created by Kubernetes,
+    # not Terraform, so the teardown (#13) must delete this PVC before
+    # `terraform destroy`, or it keeps billing.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: oci-bv
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi

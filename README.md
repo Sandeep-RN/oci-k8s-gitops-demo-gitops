@@ -21,7 +21,8 @@ apps/<name>/overlays/oke       Short-lived OKE target (ADR 0015): Flexible LB, s
 argocd/install                 ArgoCD, pinned upstream install (ArgoCD manages itself from here)
 argocd/clusters/<cluster>/     root.yaml (app of apps) + apps/ (AppProject, Applications)
 platform/<addon>/              cluster add-ons shared by all clusters (sealed-secrets, pinned)
-monitoring/                    Prometheus / Grafana configuration
+monitoring/kube-prometheus-stack/  Helm values (shared + per cluster); chart pinned in the cluster's monitoring app
+monitoring/<cluster>/          objects the chart does not create (Grafana admin SealedSecret)
 ```
 
 ## Bootstrap a cluster (the only manual kubectl, once per cluster)
