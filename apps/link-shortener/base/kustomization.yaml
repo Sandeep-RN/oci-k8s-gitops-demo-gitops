@@ -7,10 +7,22 @@ resources:
   - service.yaml
   - metrics-service.yaml
   - servicemonitor.yaml
+  - slo-rules.yaml
   - pdb.yaml
   - configmap.yaml
   - postgres-service.yaml
   - postgres-statefulset.yaml
+# The SLO dashboard as a ConfigMap. Grafana's sidecar loads every ConfigMap
+# labelled grafana_dashboard=1, in any namespace. No name hash: nothing mounts
+# it, so a changing name would only leave old copies behind.
+configMapGenerator:
+  - name: slo-redirect-dashboard
+    files:
+      - dashboards/slo-redirect.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
 # CI's tag-bump PR changes newTag to the git SHA. Do not edit it by hand.
 images:
   - name: ghcr.io/sandeep-rn/oci-k8s-gitops-demo-app-backend
