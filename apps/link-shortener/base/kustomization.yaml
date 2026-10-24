@@ -6,6 +6,9 @@ resources:
   - deployment.yaml
   - service.yaml
   - pdb.yaml
+  - configmap.yaml
+  - postgres-service.yaml
+  - postgres-statefulset.yaml
 # CI's tag-bump PR changes newTag to the git SHA. Do not edit it by hand.
 images:
   - name: ghcr.io/sandeep-rn/oci-k8s-gitops-demo-app-backend

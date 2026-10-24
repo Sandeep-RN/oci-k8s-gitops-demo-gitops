@@ -1,0 +1,11 @@
+# Non-secret connection settings, as standard libpq variables (the backend
+# reads PG* directly). Credentials come from the per-cluster SealedSecret
+# "postgres-credentials".
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGDATABASE: linkshortener
