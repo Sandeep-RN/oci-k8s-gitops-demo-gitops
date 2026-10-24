@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Sealed Secrets controller (ADR 0006), upstream release manifest, pinned.
+# It installs into kube-system as "sealed-secrets-controller", the default
+# that kubeseal expects, so no --controller-* flags are needed.
+#
+# The sealing keys are Secrets the controller creates itself; they are not in
+# Git and ArgoCD does not track them, so a sync can never prune them. They are
+# backed up outside the repo (runbook: oci-k8s-gitops-demo/docs/runbooks/sealed-secrets.md).
+resources:
+  - https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.40.0/controller.yaml

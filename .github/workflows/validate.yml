@@ -42,7 +42,7 @@ jobs:
                    -schema-location default -schema-location "${CRD_SCHEMAS}"
                    -skip CustomResourceDefinition)
           kc() { ./kubeconform "${kc_args[@]}" "$@"; }
-          dirs=(apps/*/overlays/*/ argocd/install/)
+          dirs=(apps/*/overlays/*/ argocd/install/ platform/*/)
           [ ${#dirs[@]} -gt 1 ] || { echo "no overlays found"; exit 1; }
           for dir in "${dirs[@]}"; do
             echo "::group::${dir}"
