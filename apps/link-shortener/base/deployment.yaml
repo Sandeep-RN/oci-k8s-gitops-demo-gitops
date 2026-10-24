@@ -59,13 +59,19 @@ spec:
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { memory: 128Mi } # no CPU limit: avoids throttling on a small node
+          # Probe timeouts are explicit (the default is 1 s). During a database
+          # outage /readyz answers 503 in up to ~1.5 s, and the kubelet must wait
+          # long enough to read that 503 rather than record a timeout.
           startupProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 2
+            timeoutSeconds: 2
             failureThreshold: 15
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 10
+            timeoutSeconds: 2
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 5
+            timeoutSeconds: 2
