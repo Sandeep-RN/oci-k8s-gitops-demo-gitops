@@ -23,6 +23,10 @@ jobs:
       PROMETHEUS_VERSION: 3.15.0
       # sha256 of prometheus-<version>.linux-amd64.tar.gz from the release's sha256sums.txt
       PROMETHEUS_SHA256: 2a542df32eac02ee17b9d844fb2aa1de00dafa5476579ba8a3ba862e9d572ea0
+      # Same version as the chart's Alertmanager image
+      ALERTMANAGER_VERSION: 0.34.1
+      # sha256 of alertmanager-<version>.linux-amd64.tar.gz from the release's sha256sums.txt
+      ALERTMANAGER_SHA256: 265b9d1e55ef0d5306a436018af6d2b686c2ce051f03d968f7464ecb1372a7e8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -71,8 +75,11 @@ jobs:
           done
           # Helm sources in Applications: render the pinned chart with the same
           # value files ArgoCD uses ($values/ points at this repo), so a bad
-          # values file fails here rather than at sync time.
+          # values file fails here rather than at sync time. The output is kept
+          # in rendered/<cluster>-<app>.yaml for the checks in later steps.
+          mkdir -p rendered
           for app in argocd/clusters/*/apps/*.yaml; do
+            cluster=$(basename "$(dirname "$(dirname "$app")")")
             n=$(yq '[.spec.sources[]? | select(.chart)] | length' "$app")
             for ((i = 0; i < n; i++)); do
               q() { yq "[.spec.sources[] | select(.chart)][$i] | $1" "$app"; }
@@ -83,7 +90,8 @@ jobs:
               echo "::group::${app}: $(q .chart) $(q .targetRevision)"
               ./helm template "$(q .helm.releaseName)" "$(q .chart)" \
                 --repo "$(q .repoURL)" --version "$(q .targetRevision)" \
-                --namespace "$(yq .spec.destination.namespace "$app")" "${values[@]}" | kc -
+                --namespace "$(yq .spec.destination.namespace "$app")" "${values[@]}" \
+                | tee "rendered/${cluster}-$(basename "$app" .yaml).yaml" | kc -
               echo "::endgroup::"
             done
           done
@@ -99,6 +107,36 @@ jobs:
           yq '.spec' apps/link-shortener/base/slo-rules.yaml > tests/prometheus/slo-redirect.rules.yaml
           ./promtool check rules tests/prometheus/slo-redirect.rules.yaml
           ./promtool test rules tests/prometheus/*.test.yaml
+
+      # A broken Alertmanager config is silent (the operator rejects it and no
+      # alert is sent), so check the rendered config and its routing here.
+      - name: Check Alertmanager config (amtool)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          curl -fsSL -o am.tgz "https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz"
+          echo "${ALERTMANAGER_SHA256}  am.tgz" | sha256sum -c -
+          tar -xzf am.tgz --strip-components=1 "alertmanager-${ALERTMANAGER_VERSION}.linux-amd64/amtool"
+          expect() {
+            local want=$1; shift
+            local got; got=$(./amtool config routes test --config.file=am.yaml "$@")
+            [ "$got" = "$want" ] || { echo "route for $*: got '$got', want '$want'"; exit 1; }
+          }
+          files=(rendered/*-monitoring.yaml)
+          [ ${#files[@]} -gt 0 ] || { echo "no rendered monitoring app found"; exit 1; }
+          for f in "${files[@]}"; do
+            echo "::group::${f}"
+            yq 'select(.kind == "Secret" and .metadata.name == "alertmanager-kps-alertmanager") | .data["alertmanager.yaml"]' "$f" \
+              | base64 -d > am.yaml
+            ./amtool check-config am.yaml
+            # Routing contract: noise stays out of the channel, real alerts reach it.
+            expect null alertname=Watchdog
+            expect null alertname=InfoInhibitor
+            expect null alertname=CPUThrottlingHigh severity=info
+            expect discord alertname=RedirectErrorBudgetBurnFast severity=critical
+            expect discord alertname=KubePodNotReady severity=warning
+            echo "::endgroup::"
+          done
 
       - name: Reject plain Secrets
         run: |

@@ -5,3 +5,5 @@ kind: Kustomization
 namespace: monitoring
 resources:
   - grafana-admin-sealedsecret.yaml
+  # Discord webhook URL for Alertmanager, sealed by the owner (see README).
+  - alertmanager-discord-sealedsecret.yaml
