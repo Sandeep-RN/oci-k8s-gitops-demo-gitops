@@ -38,6 +38,16 @@ spec:
         - name: backend
           # Tag is set in kustomization.yaml by the CI tag-bump PR (ADR 0009).
           image: ghcr.io/sandeep-rn/oci-k8s-gitops-demo-app-backend
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: username }
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: password }
           ports:
             - name: http
               containerPort: 8000

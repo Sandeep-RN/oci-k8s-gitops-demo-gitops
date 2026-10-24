@@ -17,3 +17,18 @@ patches:
       - op: replace
         path: /spec/template/spec/topologySpreadConstraints/0/whenUnsatisfiable
         value: DoNotSchedule
+  # OKE has no default StorageClass. oci-bv is the block-volume CSI driver;
+  # 50 GB is the smallest OCI block volume. Reclaim policy is Delete, but the
+  # StatefulSet keeps its PVC when deleted, so teardown must delete the PVC
+  # (otherwise the volume outlives `terraform destroy` and keeps billing).
+  # volumeClaimTemplates are immutable: get this right before the first sync.
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: add
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: oci-bv
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 50Gi
