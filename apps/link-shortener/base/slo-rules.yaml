@@ -88,6 +88,26 @@ spec:
             sum(rate(http_request_duration_seconds_bucket{namespace="link-shortener",route="/{code}",status!~"5..",le="0.2"}[7d]))
             / sum(rate(http_request_duration_seconds_count{namespace="link-shortener",route="/{code}",status!~"5.."}[7d]))
 
+    - name: postgres-backup
+      rules:
+        # kube-state-metrics exports the last successful run of each CronJob.
+        # 26 h = one nightly run plus slack. The "absent" branch fires when there
+        # is no success on record at all: a CronJob that never succeeded
+        # (including right after it is created, until its first run) or one
+        # that was deleted. "for: 15m" rides out a kube-state-metrics restart.
+        - alert: PostgresBackupMissing
+          expr: |
+            time() - kube_cronjob_status_last_successful_time{namespace="link-shortener",cronjob="postgres-backup"} > 26 * 3600
+            or
+            absent(kube_cronjob_status_last_successful_time{namespace="link-shortener",cronjob="postgres-backup"})
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: No successful Postgres backup in the last 26 hours.
+            description: The nightly postgres-backup CronJob has not completed successfully for more than a day. Check the last Job's logs in namespace link-shortener.
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/postgres-backup-restore.md
+
     - name: slo-redirect-alerts
       rules:
         - alert: RedirectErrorBudgetBurnFast

@@ -12,6 +12,7 @@ resources:
   - configmap.yaml
   - postgres-service.yaml
   - postgres-statefulset.yaml
+  - postgres-backup-cronjob.yaml
 # The SLO dashboard as a ConfigMap. Grafana's sidecar loads every ConfigMap
 # labelled grafana_dashboard=1, in any namespace. No name hash: nothing mounts
 # it, so a changing name would only leave old copies behind.
