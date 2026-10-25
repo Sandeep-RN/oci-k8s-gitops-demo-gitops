@@ -6,6 +6,8 @@ resources:
   # Sealed with this cluster's key (strict scope: this name and namespace only).
   # Re-seal for another cluster; see argocd/clusters/oke/sealed-secrets-cert.pem.
   - postgres-credentials-sealedsecret.yaml
+  # The backend's own role (ADR 0018); username linkshortener_app, random password.
+  - postgres-app-credentials-sealedsecret.yaml
 patches:
   - path: service-loadbalancer.yaml
   # Two nodes in different fault domains: require one pod per node, so a node
