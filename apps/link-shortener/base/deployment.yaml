@@ -34,6 +34,13 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: backend
+          # Count only pods of the same ReplicaSet. Without this, a rollout counts
+          # old and new pods together: each new pod's placement is valid while the
+          # old ones exist, and once they are gone both new pods can be left on one
+          # node. Spread is never re-checked after placement. (Beta, on by default
+          # since Kubernetes 1.27.)
+          matchLabelKeys:
+            - pod-template-hash
       containers:
         - name: backend
           # Tag is set in kustomization.yaml by the CI tag-bump PR (ADR 0009).
