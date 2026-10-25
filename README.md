@@ -1,11 +1,15 @@
 # oci-k8s-gitops-demo-gitops
 
-Source of truth for the demo cluster. ArgoCD watches this repo and syncs it to
-a single-node k3s cluster on OCI Always Free. Once ArgoCD runs, **nothing is
-applied by hand with kubectl**: change manifests here and let ArgoCD sync.
+Source of truth for the demo clusters. ArgoCD watches this repo and syncs it:
+today to the short-lived OKE target (ADR 0015), later to a single-node k3s
+cluster on OCI Always Free. Once ArgoCD runs, **nothing is applied by hand
+with kubectl**: change manifests here and let ArgoCD sync.
 
-> **Status:** link-shortener base, k3s and OKE overlays, ArgoCD bootstrap for
-> the OKE target. Ingress, Postgres and the k3s cluster root come next.
+> **Status (2026-10-25):** running on OKE: the link shortener and PostgreSQL
+> (sealed credentials, nightly backups to Object Storage), Sealed Secrets,
+> and kube-prometheus-stack with the redirect SLO rules, burn-rate alerts to
+> Discord and a Grafana dashboard. Next: the k3s cluster root, Ingress and TLS,
+> once the Always Free node exists.
 
 Part of a three-repo project. Architecture, ADRs and the issue tracker live in
 [oci-k8s-gitops-demo](https://github.com/Sandeep-RN/oci-k8s-gitops-demo);
@@ -15,14 +19,17 @@ application code and CI live in
 ## Layout
 
 ```
-apps/<name>/base               Kustomize base (Deployment, Service, PDB)
+apps/<name>/base               Kustomize base: Deployment, Services, PDB, Postgres StatefulSet,
+                               backup CronJob, ServiceMonitor, SLO rules, Grafana dashboard
 apps/<name>/overlays/k3s       Always Free k3s node
 apps/<name>/overlays/oke       Short-lived OKE target (ADR 0015): Flexible LB, strict spread
 argocd/install                 ArgoCD, pinned upstream install (ArgoCD manages itself from here)
 argocd/clusters/<cluster>/     root.yaml (app of apps) + apps/ (AppProject, Applications)
 platform/<addon>/              cluster add-ons shared by all clusters (sealed-secrets, pinned)
 monitoring/kube-prometheus-stack/  Helm values (shared + per cluster); chart pinned in the cluster's monitoring app
-monitoring/<cluster>/          objects the chart does not create (Grafana admin SealedSecret)
+monitoring/<cluster>/          objects the chart does not create (Grafana admin and Discord webhook SealedSecrets)
+tests/prometheus/              promtool unit tests for the alert rules (run in CI)
+.github/workflows/             validate (kubeconform, Helm render, promtool, amtool), gitleaks
 ```
 
 ## Bootstrap a cluster (the only manual kubectl, once per cluster)
@@ -41,7 +48,10 @@ client-side apply. The ArgoCD UI is reached only by `kubectl port-forward`
 
 1. The app repo's CI builds an image and opens a tag-bump PR here (ADR 0009).
    Do not edit those image tags by hand.
-2. The PR merges (CI must pass, ADR 0011).
+2. The PR merges once the required `validate` check passes (ADR 0011).
+   `validate` renders every overlay and the pinned Helm chart and checks them
+   with kubeconform, unit-tests the alert rules with promtool, and checks the
+   Alertmanager config and routing with amtool.
 3. ArgoCD detects the change and syncs the cluster.
 
 ## Secrets
@@ -52,6 +62,8 @@ Only **SealedSecret** manifests may be committed, never plain Secrets (ADR
 ## Working here
 
 - Install hooks once: `pip install pre-commit && pre-commit install`
-  (gitleaks with custom OCI rules).
+  (gitleaks with custom OCI rules). CI also scans the full history with
+  gitleaks, since `--no-verify` skips hooks. SealedSecret ciphertext is
+  allowlisted narrowly in `.gitleaks.toml`.
 - **This repo is public.** Never commit tokens, passwords, kubeconfig, OCIDs
   or public IPs.
