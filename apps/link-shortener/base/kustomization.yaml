@@ -13,6 +13,7 @@ resources:
   - postgres-service.yaml
   - postgres-statefulset.yaml
   - postgres-backup-cronjob.yaml
+  - postgres-app-role-job.yaml
 # The SLO dashboard as a ConfigMap. Grafana's sidecar loads every ConfigMap
 # labelled grafana_dashboard=1, in any namespace. No name hash: nothing mounts
 # it, so a changing name would only leave old copies behind.
@@ -24,6 +25,11 @@ configMapGenerator:
       disableNameSuffixHash: true
       labels:
         grafana_dashboard: "1"
+  # SQL for the postgres-app-role Job. The name hash changes with the file,
+  # and kustomize updates the Job's reference to match.
+  - name: postgres-app-role-sql
+    files:
+      - sql/app-role.sql
 # CI's tag-bump PR changes newTag to the git SHA. Do not edit it by hand.
 images:
   - name: ghcr.io/sandeep-rn/oci-k8s-gitops-demo-app-backend

@@ -1,0 +1,73 @@
+# Creates or updates the backend's Postgres role (ADR 0018; SQL in
+# sql/app-role.sql). Only this Job, the Postgres server and the backup hold the
+# admin credentials; the backend connects as the app role.
+#
+# An ArgoCD Sync hook, so it runs on every sync, in this order:
+#   wave 0  Postgres, Secrets, ConfigMaps (waited on until healthy)
+#   wave 1  this Job (waited on until it completes)
+#   wave 2  the backend Deployment
+# The role must exist before a backend pod uses it: readiness is pod-local
+# (ADR 0016), so a pod with credentials that do not work yet would still be
+# Ready and answer 503s. If the Job fails (Postgres down), the sync stops before
+# the backend changes; the Application's sync retry tries again.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-app-role
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "1"
+    # Keep the last run (for its logs) until the next sync replaces it.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-app-role
+        app.kubernetes.io/part-of: link-shortener
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70 # "postgres" in the Alpine image
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: psql
+          # Same image as the server, so the client matches its version.
+          image: docker.io/library/postgres:18.6-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            # Admin: runs the script.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: username }
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: password }
+            # App role: what the script creates. Read with \getenv, not passed as arguments.
+            - name: APP_PGUSER
+              valueFrom:
+                secretKeyRef: { name: postgres-app-credentials, key: username }
+            - name: APP_PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-app-credentials, key: password }
+          command: ["psql", "-X", "--quiet", "-f", "/sql/app-role.sql"]
+          volumeMounts:
+            - { name: sql, mountPath: /sql, readOnly: true }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: sql
+          configMap:
+            name: postgres-app-role-sql
