@@ -16,3 +16,13 @@ regex = '''objectstorage\.[a-z0-9-]+\.oraclecloud\.com/n/[a-z0-9]+'''
 id = "oci-api-key-fingerprint"
 description = "OCI API signing key fingerprint"
 regex = '''fingerprint\s*=\s*"?((?:[0-9a-f]{2}:){15}[0-9a-f]{2})'''
+
+# SealedSecrets (ADR 0006) hold kubeseal ciphertext in fields named password,
+# admin-password, ... Gitleaks 8.30 reads those as API keys. Ciphertext is safe
+# to commit by design (only the cluster's private key can open it). Scoped to
+# one rule and to the "Ag" + 100+ base64 characters shape kubeseal produces, so
+# a real plaintext password in the same field is still caught.
+[[allowlists]]
+description = "kubeseal ciphertext in SealedSecrets"
+targetRules = ["generic-api-key"]
+regexes = ['''^Ag[A-Za-z0-9+/=]{100,}$''']
