@@ -27,4 +27,4 @@ configMapGenerator:
 # CI's tag-bump PR changes newTag to the git SHA. Do not edit it by hand.
 images:
   - name: ghcr.io/sandeep-rn/oci-k8s-gitops-demo-app-backend
-    newTag: e6efd9d787825d2319fa83be062b574c9ba86877
+    newTag: e55084d9deb5a4fa3debe9f1352cb6c8de8f53e9
