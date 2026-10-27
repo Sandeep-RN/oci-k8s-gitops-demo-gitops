@@ -1,0 +1,30 @@
+# Prometheus blackbox exporter (ADR 0019): makes the HTTP requests behind
+# Probe objects, such as the redirect probe in apps/link-shortener/base.
+# Two sources: the pinned upstream chart, and this repo for the values file.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: blackbox-exporter
+  namespace: argocd
+spec:
+  # "default", not "demo": it deploys into the monitoring namespace.
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: prometheus-blackbox-exporter
+      # Pinned; CI renders this exact version with the values below.
+      targetRevision: 11.20.0
+      helm:
+        releaseName: blackbox-exporter
+        valueFiles:
+          - $values/monitoring/blackbox-exporter/values.yaml
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
