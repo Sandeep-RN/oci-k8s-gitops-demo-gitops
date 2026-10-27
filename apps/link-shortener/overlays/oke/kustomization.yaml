@@ -9,14 +9,6 @@ resources:
   # The backend's own role (ADR 0018); username linkshortener_app, random password.
   - postgres-app-credentials-sealedsecret.yaml
 patches:
-  # TEMPORARY live test of RedirectProbeNoAnswer (demo #79). Reverted right after.
-  - target:
-      kind: Deployment
-      name: backend
-    patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 0
   - path: service-loadbalancer.yaml
   # Two nodes in different fault domains: require one pod per node, so a node
   # drain exercises the PDB for real (it cannot on single-node k3s, ADR 0001).
