@@ -1,0 +1,110 @@
+# promtool unit tests for RedirectProbeNoAnswer and RedirectProbeMissing
+# (apps/link-shortener/base/slo-rules.yaml, group redirect-probe).
+rule_files:
+  - slo-redirect.rules.yaml
+
+evaluation_interval: 30s
+
+tests:
+  # No answer for 5 minutes: pending at 2m, firing after 3m.
+  - interval: 30s
+    input_series:
+      - series: 'probe_success{job="redirect-probe",instance="http://backend.link-shortener.svc/Probe00"}'
+        values: '0x10'
+      - series: 'probe_http_status_code{job="redirect-probe",instance="http://backend.link-shortener.svc/Probe00"}'
+        values: '0x10'
+      - series: 'up{job="redirect-probe",instance="http://backend.link-shortener.svc/Probe00"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: RedirectProbeNoAnswer
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: RedirectProbeNoAnswer
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: redirect-probe
+              instance: http://backend.link-shortener.svc/Probe00
+            exp_annotations:
+              summary: Redirect requests inside the cluster get no answer.
+              description: For 3 minutes the redirect probe got no HTTP response from the backend Service (refused, reset or timed out). Check that backend pods are running and Ready.
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+      - eval_time: 4m
+        alertname: RedirectProbeMissing
+        exp_alerts: []
+
+  # Database down: the probe fails, but with a 503. The app counts these,
+  # so this alert stays quiet and the burn-rate alerts do the paging.
+  - interval: 30s
+    input_series:
+      - series: 'probe_success{job="redirect-probe",instance="t"}'
+        values: '0x20'
+      - series: 'probe_http_status_code{job="redirect-probe",instance="t"}'
+        values: '503x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedirectProbeNoAnswer
+        exp_alerts: []
+
+  # Healthy: a 404 for the unknown code is a success.
+  - interval: 30s
+    input_series:
+      - series: 'probe_success{job="redirect-probe",instance="t"}'
+        values: '1x20'
+      - series: 'probe_http_status_code{job="redirect-probe",instance="t"}'
+        values: '404x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedirectProbeNoAnswer
+        exp_alerts: []
+
+  # One lost probe among good ones: no alert.
+  - interval: 30s
+    input_series:
+      - series: 'probe_success{job="redirect-probe",instance="t"}'
+        values: '1 1 1 0 1 1 1 1 1 1 1 1'
+      - series: 'probe_http_status_code{job="redirect-probe",instance="t"}'
+        values: '404 404 404 0 404 404 404 404 404 404 404 404'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RedirectProbeNoAnswer
+        exp_alerts: []
+
+  # Exporter down: scrapes fail (up 0). Quiet at 14m, firing after 15m.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="redirect-probe",instance="t"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: RedirectProbeMissing
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: RedirectProbeMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: redirect-probe
+              instance: t
+            exp_annotations:
+              summary: The synthetic redirect probe is not running.
+              description: Prometheus has no working redirect probe for 15 minutes. Check the blackbox-exporter Deployment in namespace monitoring and the Probe "redirect" in link-shortener.
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+
+  # No probe at all (never deployed, or deleted): absent() fires after 15m.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="other"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: RedirectProbeMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: redirect-probe
+            exp_annotations:
+              summary: The synthetic redirect probe is not running.
+              description: Prometheus has no working redirect probe for 15 minutes. Check the blackbox-exporter Deployment in namespace monitoring and the Probe "redirect" in link-shortener.
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md

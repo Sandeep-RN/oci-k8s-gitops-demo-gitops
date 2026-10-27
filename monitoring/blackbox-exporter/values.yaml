@@ -1,0 +1,37 @@
+# prometheus-blackbox-exporter values (ADR 0019), shared by every cluster.
+# Chart version is pinned in argocd/clusters/<cluster>/apps/blackbox-exporter.yaml.
+
+# Service name blackbox-exporter.monitoring.svc:9115, which Probe objects use.
+fullnameOverride: blackbox-exporter
+
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+# The chart's container defaults already run as UID 1000 with a read-only root
+# filesystem, no privilege escalation and all capabilities dropped.
+
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits: { memory: 64Mi }
+
+config:
+  modules:
+    # The redirect probe: GET /{code} on the backend, as a user would.
+    #   302: a link with that code exists.
+    #   404: no such link. The app still looked it up in Postgres, and the
+    #        SLI counts a 404 as a good answer.
+    #   503 (or any other code): fail. These answers are counted by the app's
+    #        own metrics too, so the SLO burn-rate alerts handle them.
+    #   No answer (refused, reset, timeout): fail with status code 0. The app
+    #        never saw these; RedirectProbeNoAnswer alerts on them.
+    # Redirects are not followed: the target is someone else's site.
+    redirect:
+      prober: http
+      # Above the app's own worst case (pool timeout 2 s plus the store's hard
+      # limit), so a slow 503 is still seen as an answer, not a timeout.
+      timeout: 4s
+      http:
+        method: GET
+        valid_status_codes: [302, 404]
+        follow_redirects: false
+        preferred_ip_protocol: ip4

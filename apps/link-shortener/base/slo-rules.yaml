@@ -108,6 +108,43 @@ spec:
             description: The nightly postgres-backup CronJob has not completed successfully for more than a day. Check the last Job's logs in namespace link-shortener.
             runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/postgres-backup-restore.md
 
+    - name: redirect-probe
+      rules:
+        # The synthetic probe (redirect-probe.yaml, ADR 0019) got no HTTP answer
+        # at all: connection refused (no ready backend), reset, or a hang past
+        # 4 s. The app's metrics never see these. Probes that got a 5xx are
+        # left out on purpose: the app counts those, and the burn-rate alerts
+        # below page for them, so a database outage pages once, not twice.
+        # 3 m = six probes in a row; one lost probe is not an outage.
+        - alert: RedirectProbeNoAnswer
+          expr: |
+            probe_success{job="redirect-probe"} == 0
+            and probe_http_status_code{job="redirect-probe"} == 0
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: Redirect requests inside the cluster get no answer.
+            description: For 3 minutes the redirect probe got no HTTP response from the backend Service (refused, reset or timed out). Check that backend pods are running and Ready.
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+
+        # Without the probe, quiet periods have no traffic and the SLO alerts
+        # stay silent, so a missing probe is worth a ticket. "absent" covers a
+        # deleted Probe or an exporter that never started; "up == 0" covers an
+        # exporter that is down.
+        - alert: RedirectProbeMissing
+          expr: |
+            up{job="redirect-probe"} == 0
+            or
+            absent(up{job="redirect-probe"})
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: The synthetic redirect probe is not running.
+            description: Prometheus has no working redirect probe for 15 minutes. Check the blackbox-exporter Deployment in namespace monitoring and the Probe "redirect" in link-shortener.
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/slo-redirect-availability.md
+
     - name: slo-redirect-alerts
       rules:
         - alert: RedirectErrorBudgetBurnFast

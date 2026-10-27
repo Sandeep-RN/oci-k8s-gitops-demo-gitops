@@ -1,0 +1,28 @@
+# Synthetic redirect traffic (ADR 0019). Every 30 s the blackbox exporter
+# requests a short link the way a user would, so the redirect SLO has steady
+# traffic even when nobody visits, and requests that never reach the app are
+# still seen (alerts: slo-rules.yaml, group redirect-probe).
+#
+# The code is valid but not stored, so the app answers 404 after looking it up
+# in Postgres: app and database are both exercised with no seed data. If a real
+# link ever gets this code, the 302 is accepted too.
+#
+# Target: the in-cluster Service. It does not cover the cloud load balancer or
+# the internet path; the GitHub Actions probe in the demo repo does, more slowly.
+# A cluster with a public DNS name can point this at that name instead.
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: redirect
+spec:
+  # The job label in Prometheus; alerts and tests select on it.
+  jobName: redirect-probe
+  interval: 30s
+  scrapeTimeout: 10s
+  module: redirect
+  prober:
+    url: blackbox-exporter.monitoring.svc:9115
+  targets:
+    staticConfig:
+      static:
+        - http://backend.link-shortener.svc/Probe00
