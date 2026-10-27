@@ -7,9 +7,10 @@
 # in Postgres: app and database are both exercised with no seed data. If a real
 # link ever gets this code, the 302 is accepted too.
 #
-# Target: the in-cluster Service. It does not cover the cloud load balancer or
-# the internet path; the GitHub Actions probe in the demo repo does, more slowly.
-# A cluster with a public DNS name can point this at that name instead.
+# Target: the in-cluster Service, on every cluster. It does not cover the cloud
+# load balancer or the internet path; the GitHub Actions probe in the demo repo
+# does, more slowly. Probing the public hostname from inside is avoided on
+# purpose (hairpin routing, ADR 0004 and 0008).
 apiVersion: monitoring.coreos.com/v1
 kind: Probe
 metadata:
