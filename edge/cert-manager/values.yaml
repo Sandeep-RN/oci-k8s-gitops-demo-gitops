@@ -10,7 +10,8 @@ crds:
 
 # Ask public resolvers whether the TXT record is visible, not the cluster DNS.
 # Cluster DNS can cache a negative answer for the challenge name, which makes
-# the self-check wait for the cache instead of for Cloudflare.
+# the self-check wait for the cache instead of for Cloudflare. The addresses
+# are Cloudflare's and Google's public resolvers, not private infrastructure.
 extraArgs:
   - --dns01-recursive-nameservers-only
   - --dns01-recursive-nameservers=1.1.1.1:53,8.8.8.8:53

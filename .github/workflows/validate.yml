@@ -138,8 +138,9 @@ jobs:
             echo "::endgroup::"
           done
 
-      # ADR 0020: both Let's Encrypt issuers exist, use DNS-01 on Cloudflare and
-      # read the token from the SealedSecret's Secret, and the chart is pinned.
+      # ADR 0020: both Let's Encrypt issuers exist with the right ACME server, use
+      # DNS-01 on Cloudflare with the cloudflare-api-token Secret, and the chart
+      # is pinned.
       - name: Assert cert-manager issuers (ADR 0020)
         run: |
           set -euo pipefail

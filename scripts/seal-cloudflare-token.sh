@@ -2,8 +2,9 @@
 # Seal the cert-manager Cloudflare API token into the gitops repo (demo #86).
 #
 # The token needs Zone:DNS:Edit and Zone:Zone:Read on the sandeeprn.in zone
-# only. It is read from a hidden prompt and piped straight into kubeseal: it is
-# never written to disk in plaintext, shell history or logs.
+# only. It is read from a hidden prompt, so it never reaches shell history or
+# logs. It does touch disk briefly: a private (mode 600) temp file that kubectl
+# reads, removed on exit.
 #
 # Sealing needs no cluster access: it uses this cluster's public certificate.
 # Re-running replaces the SealedSecret (a fresh encryption each time) and does
