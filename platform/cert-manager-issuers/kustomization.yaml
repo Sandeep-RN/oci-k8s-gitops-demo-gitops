@@ -8,3 +8,4 @@ kind: Kustomization
 # exist but cannot get certificates (not Ready). Keep `resources` the last key.
 resources:
   - clusterissuers.yaml
+  - cloudflare-api-token-sealedsecret.yaml
