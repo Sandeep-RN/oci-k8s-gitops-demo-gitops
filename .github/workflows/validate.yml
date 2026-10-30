@@ -138,10 +138,31 @@ jobs:
             echo "::endgroup::"
           done
 
+      # ADR 0020: both Let's Encrypt issuers exist with the right ACME server, use
+      # DNS-01 on Cloudflare with the cloudflare-api-token Secret, and the chart
+      # is pinned.
+      - name: Assert cert-manager issuers (ADR 0020)
+        run: |
+          set -euo pipefail
+          fail() { echo "FAIL: $*"; exit 1; }
+          out=$(kubectl kustomize platform/cert-manager-issuers)
+          for pair in "letsencrypt-staging https://acme-staging-v02.api.letsencrypt.org/directory" \
+                      "letsencrypt-production https://acme-v02.api.letsencrypt.org/directory"; do
+            read -r name server <<<"$pair"
+            sel="select(.kind == \"ClusterIssuer\" and .metadata.name == \"${name}\")"
+            [ "$(yq "${sel} | .spec.acme.server" <<<"$out")" = "$server" ] || fail "${name}: wrong ACME server"
+            [ "$(yq "${sel} | .spec.acme.solvers[0].dns01.cloudflare.apiTokenSecretRef.name" <<<"$out")" = "cloudflare-api-token" ] || fail "${name}: not DNS-01 on Cloudflare with cloudflare-api-token"
+          done
+          # Chart version must be an exact vX.Y.Z, never a range or "latest".
+          for app in argocd/clusters/*/apps/cert-manager.yaml; do
+            v=$(yq '.spec.sources[] | select(.chart == "cert-manager") | .targetRevision' "$app")
+            [[ "$v" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "${app}: chart version '${v}' is not pinned"
+          done
+
       - name: Reject plain Secrets
         run: |
           set -euo pipefail
           # Only SealedSecrets may be committed (ADR 0006).
-          if grep -rEl --include='*.yaml' --include='*.yml' '^kind: Secret$' apps argocd monitoring 2>/dev/null; then
+          if grep -rEl --include='*.yaml' --include='*.yml' '^kind: Secret$' apps argocd monitoring platform edge 2>/dev/null; then
             echo "plain Secret manifest found; use a SealedSecret"; exit 1
           fi

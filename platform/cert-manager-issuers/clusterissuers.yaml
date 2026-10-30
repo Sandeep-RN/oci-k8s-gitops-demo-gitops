@@ -1,0 +1,44 @@
+# Let's Encrypt via ACME DNS-01 on Cloudflare (ADR 0005). DNS-01 works with an
+# NLB that passes TCP through, needs no inbound port, and can issue before the
+# DNS record for the host exists.
+#
+# No ACME account email is set: it is optional, and this repo is public.
+#
+# Both issuers use the same Cloudflare token, kept in the cert-manager
+# namespace (a ClusterIssuer reads its Secret from there). The token is
+# separate from external-dns's (ADR 0020).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - selector:
+          dnsZones: [sandeeprn.in]
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-production-account-key
+    solvers:
+      - selector:
+          dnsZones: [sandeeprn.in]
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
