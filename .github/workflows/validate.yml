@@ -96,6 +96,40 @@ jobs:
             done
           done
 
+      # ADR 0020 edge settings, checked on the rendered Traefik output so a
+      # misconfiguration fails at PR time, not on the live URL.
+      - name: Assert Traefik edge settings (ADR 0020)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(rendered/*-traefik.yaml)
+          [ ${#files[@]} -gt 0 ] || { echo "no rendered traefik app found"; exit 1; }
+          fail() { echo "FAIL: $*"; exit 1; }
+          for f in "${files[@]}"; do
+            echo "::group::${f}"
+            svc='select(.kind == "Service" and .metadata.name == "traefik")'
+            [ "$(yq "${svc} | .spec.type" "$f")" = "LoadBalancer" ] || fail "Service is not a LoadBalancer"
+            [ "$(yq "${svc} | .metadata.annotations[\"oci.oraclecloud.com/load-balancer-type\"]" "$f")" = "nlb" ] || fail "load-balancer-type is not nlb"
+            [ "$(yq "${svc} | .spec.externalTrafficPolicy" "$f")" = "Cluster" ] || fail "externalTrafficPolicy is not Cluster"
+            [ "$(yq "${svc} | .metadata.annotations[\"oci-network-load-balancer.oraclecloud.com/security-list-management-mode\"]" "$f")" = "None" ] || fail "security-list-management-mode is not None"
+            # With externalTrafficPolicy Cluster this annotation makes requests fail.
+            if grep -q 'is-preserve-source' "$f"; then fail "is-preserve-source must be absent"; fi
+            args=$(yq 'select(.kind == "Deployment" and .metadata.name == "traefik") | .spec.template.spec.containers[0].args[]' "$f")
+            grep -qx -- '--entryPoints.web.http.redirections.entryPoint.to=:443' <<<"$args" || fail "HTTP is not redirected to 443"
+            grep -qx -- '--entryPoints.web.http.redirections.entryPoint.permanent=true' <<<"$args" || fail "redirect is not permanent"
+            grep -qx -- '--providers.kubernetesingress' <<<"$args" || fail "Ingress provider is off"
+            grep -qx -- '--api.dashboard=false' <<<"$args" || fail "dashboard is enabled"
+            [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "traefik") | .spec.replicas' "$f")" = "2" ] || fail "not 2 replicas"
+            [ "$(yq 'select(.kind == "PodDisruptionBudget") | .metadata.name' "$f")" = "traefik" ] || fail "no PodDisruptionBudget"
+            echo "ok"
+            echo "::endgroup::"
+          done
+          # Chart version must be an exact X.Y.Z, never a range or "latest".
+          for app in argocd/clusters/*/apps/traefik.yaml; do
+            v=$(yq '.spec.sources[] | select(.chart == "traefik") | .targetRevision' "$app")
+            [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "${app}: chart version '${v}' is not pinned"
+          done
+
       - name: Test alerting rules (promtool)
         run: |
           set -euo pipefail

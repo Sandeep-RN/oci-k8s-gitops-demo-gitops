@@ -1,0 +1,85 @@
+# Traefik values (ADR 0020, amending ADR 0004). Chart version is pinned in
+# argocd/clusters/<cluster>/apps/traefik.yaml.
+#
+# Traefik runs behind the free Network Load Balancer, which passes TCP through.
+# Plain HTTP first: HTTP redirects to HTTPS at the entrypoint, and certificates
+# arrive later (cert-manager, ADR 0005).
+
+deployment:
+  # One per node on the 2-node OKE cluster; the PDB below keeps one serving
+  # during a drain. If the node count grows, raise this, not the PDB.
+  replicas: 2
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    # DoNotSchedule: two pods on one node would defeat the point. If a node is
+    # down the second pod stays Pending instead of doubling up, which is the
+    # intended failure mode for an entry point behind a PDB.
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: traefik
+        app.kubernetes.io/instance: traefik-traefik
+    # Same reasoning as the backend Deployment: during a rollout, count only
+    # pods of the same ReplicaSet so old and new pods are not mixed.
+    matchLabelKeys:
+      - pod-template-hash
+
+resources:
+  # Sized for 1 OCPU / 8 GB nodes shared with the app, Postgres and monitoring.
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { memory: 128Mi }
+
+ports:
+  web:
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+service:
+  enabled: true
+  annotations:
+    # Network Load Balancer (Always Free: one NLB), not the Flexible LB that
+    # the app's own Service uses.
+    oci.oraclecloud.com/load-balancer-type: "nlb"
+    # Terraform owns the security lists (LB -> NodePort rules exist already).
+    # "None" stops the cloud controller from editing them, which would drift
+    # `terraform plan`.
+    oci-network-load-balancer.oraclecloud.com/security-list-management-mode: "None"
+    # NOT set: oci-network-load-balancer.oraclecloud.com/is-preserve-source.
+    # With externalTrafficPolicy Cluster, source preservation makes requests
+    # fail (return traffic takes a different node). The cost: Traefik sees the
+    # NLB's address, not the client's (ADR 0020 accepts this).
+    # CI asserts this annotation is absent.
+  spec:
+    type: LoadBalancer
+    # Cluster: every node accepts traffic on the NodePort and forwards it, so
+    # the default NLB health check passes on both nodes even if a Traefik pod
+    # is on only one of them.
+    externalTrafficPolicy: Cluster
+
+providers:
+  kubernetesIngress:
+    enabled: true
+    # Publish the NLB address in Ingress status; external-dns reads it later.
+    publishedService:
+      enabled: true
+  # Kept on: the HSTS and rate-limit Middlewares (ADR 0020) are CRDs.
+  kubernetesCRD:
+    enabled: true
+
+# Admin UIs stay off the public internet (ADR 0014): no dashboard route, and
+# the API is not served on the public entrypoints.
+api:
+  dashboard: false
+ingressRoute:
+  dashboard:
+    enabled: false
