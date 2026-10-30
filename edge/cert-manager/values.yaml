@@ -1,0 +1,31 @@
+# cert-manager values (ADR 0005, 0020). Chart version is pinned in
+# argocd/clusters/<cluster>/apps/cert-manager.yaml.
+
+crds:
+  # The CRDs ship with the chart so ArgoCD upgrades them together with the
+  # controller. keep: true stops a pruned Application from deleting them, which
+  # would garbage-collect every Certificate and Issuer.
+  enabled: true
+  keep: true
+
+# Ask public resolvers whether the TXT record is visible, not the cluster DNS.
+# Cluster DNS can cache a negative answer for the challenge name, which makes
+# the self-check wait for the cache instead of for Cloudflare.
+extraArgs:
+  - --dns01-recursive-nameservers-only
+  - --dns01-recursive-nameservers=1.1.1.1:53,8.8.8.8:53
+
+# Sized for 1 OCPU / 8 GB nodes shared with the app, Postgres and monitoring.
+# One replica of each: certificates are renewed in the background, so a short
+# controller outage costs nothing, and leader election would only add pods.
+resources:
+  requests: { cpu: 10m, memory: 64Mi }
+  limits: { memory: 128Mi }
+webhook:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 64Mi }
+cainjector:
+  resources:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits: { memory: 128Mi }
