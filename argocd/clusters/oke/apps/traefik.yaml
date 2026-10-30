@@ -1,0 +1,36 @@
+# Traefik ingress controller behind the free Network Load Balancer (ADR 0020).
+# Two sources: the pinned upstream chart, and this repo for the values file.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik
+  namespace: argocd
+  annotations:
+    # With the other platform pieces, before workloads that bring Ingresses.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  # "default", not "demo": it creates CRDs, a ClusterRole and the IngressClass.
+  project: default
+  sources:
+    - repoURL: https://traefik.github.io/charts
+      chart: traefik
+      # Pinned (Traefik v3.7.16); CI renders this exact version with the values below.
+      targetRevision: 42.1.3
+      helm:
+        releaseName: traefik
+        valueFiles:
+          - $values/edge/traefik/values.yaml
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Traefik's CRDs exceed the client-side apply annotation size limit.
+      - ServerSideApply=true
