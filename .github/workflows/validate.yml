@@ -315,6 +315,11 @@ jobs:
             out=$(kubectl kustomize "$path")
             names=$(yq 'select(.kind == "Ingress") | .metadata.name' <<<"$out")
             [ -n "$names" ] || fail "${path}: no Ingress"
+            # The Ingress is the only way in (cutover step 2, demo #91). A
+            # LoadBalancer Service would bring back a second public address
+            # that skips TLS, HSTS and the rate limit.
+            lbs=$(yq 'select(.kind == "Service" and .spec.type == "LoadBalancer") | .metadata.name' <<<"$out")
+            [ -z "$lbs" ] || fail "${path}: LoadBalancer Service bypasses the Ingress: ${lbs}"
             mw=$(yq 'select(.kind == "Middleware" and .metadata.name == "rate-limit")' <<<"$out")
             [ -n "$mw" ] || fail "${path}: no rate-limit Middleware"
             [ "$(yq '.spec.rateLimit.average // 0' <<<"$mw")" -gt 0 ] || fail "${path}: rate-limit has no average"
