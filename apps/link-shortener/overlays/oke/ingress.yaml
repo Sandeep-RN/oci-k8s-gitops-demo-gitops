@@ -12,10 +12,11 @@ metadata:
   name: backend
   namespace: link-shortener
   annotations:
-    # Staging first: its certificate is not browser-trusted, but its rate
-    # limits are generous while the setup is being proven. #90 switches this
-    # to letsencrypt-production.
-    cert-manager.io/cluster-issuer: letsencrypt-staging
+    # Production, after staging proved the setup (demo #88, #90). Changing the
+    # issuer makes cert-manager reissue into the same Secret; the old
+    # certificate keeps serving until the new one is ready. cert-manager renews
+    # automatically 30 days before expiry (a third of Let's Encrypt's 90 days).
+    cert-manager.io/cluster-issuer: letsencrypt-production
     # HTTPS only. Plain HTTP is redirected to HTTPS at Traefik's entrypoint.
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.middlewares: link-shortener-rate-limit@kubernetescrd
