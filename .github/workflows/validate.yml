@@ -314,8 +314,7 @@ jobs:
             echo "::group::${path}"
             out=$(kubectl kustomize "$path")
             names=$(yq 'select(.kind == "Ingress") | .metadata.name' <<<"$out")
-            # TEMPORARY (demo #88 delete test): no Ingress allowed; reverted next PR.
-            # [ -n "$names" ] || fail "${path}: no Ingress"
+            [ -n "$names" ] || fail "${path}: no Ingress"
             mw=$(yq 'select(.kind == "Middleware" and .metadata.name == "rate-limit")' <<<"$out")
             [ -n "$mw" ] || fail "${path}: no rate-limit Middleware"
             [ "$(yq '.spec.rateLimit.average // 0' <<<"$mw")" -gt 0 ] || fail "${path}: rate-limit has no average"
