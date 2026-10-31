@@ -19,7 +19,8 @@ metadata:
     cert-manager.io/cluster-issuer: letsencrypt-production
     # HTTPS only. Plain HTTP is redirected to HTTPS at Traefik's entrypoint.
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.middlewares: link-shortener-rate-limit@kubernetescrd
+    # Rate limit first, so rejected requests cost nothing more; then HSTS.
+    traefik.ingress.kubernetes.io/router.middlewares: link-shortener-rate-limit@kubernetescrd,link-shortener-hsts@kubernetescrd
     # Explicitly DNS only (also external-dns's default): Cloudflare's proxy
     # would end TLS at Cloudflare instead of at our certificate (ADR 0020).
     external-dns.alpha.kubernetes.io/cloudflare-proxied: "false"
