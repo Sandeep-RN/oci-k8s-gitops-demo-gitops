@@ -321,11 +321,21 @@ jobs:
             [ "$(yq '.spec.rateLimit.burst // 0' <<<"$mw")" -gt 0 ] || fail "${path}: rate-limit has no burst"
             # Traefik's name for a CRD Middleware: <namespace>-<name>@kubernetescrd.
             ref="$(yq '.metadata.namespace' <<<"$mw")-rate-limit@kubernetescrd"
+            # HSTS: browsers keep it for max-age and it cannot be withdrawn
+            # early, so it covers this host only (ADR 0020, demo #90). The
+            # max-age must match scripts/verify-public-url.sh in the demo repo.
+            hsts=$(yq 'select(.kind == "Middleware" and .metadata.name == "hsts")' <<<"$out")
+            [ -n "$hsts" ] || fail "${path}: no hsts Middleware"
+            [ "$(yq '.spec.headers.stsSeconds' <<<"$hsts")" = "15552000" ] || fail "${path}: hsts max-age is not 15552000 (180 days)"
+            [ "$(yq '.spec.headers.stsIncludeSubdomains // false' <<<"$hsts")" = "false" ] || fail "${path}: hsts must not include subdomains"
+            [ "$(yq '.spec.headers.stsPreload // false' <<<"$hsts")" = "false" ] || fail "${path}: hsts must not ask for preload"
+            hsts_ref="$(yq '.metadata.namespace' <<<"$hsts")-hsts@kubernetescrd"
             for name in $names; do
               ing="select(.kind == \"Ingress\" and .metadata.name == \"${name}\")"
               a() { yq "${ing} | .metadata.annotations[\"$1\"] // \"\"" <<<"$out"; }
               [ "$(yq "${ing} | .spec.ingressClassName" <<<"$out")" = "traefik" ] || fail "${name}: ingressClassName is not traefik"
               tr ',' '\n' <<<"$(a traefik.ingress.kubernetes.io/router.middlewares)" | tr -d ' ' | grep -qFx -- "$ref" || fail "${name}: rate-limit Middleware (${ref}) is not attached"
+              tr ',' '\n' <<<"$(a traefik.ingress.kubernetes.io/router.middlewares)" | tr -d ' ' | grep -qFx -- "$hsts_ref" || fail "${name}: hsts Middleware (${hsts_ref}) is not attached"
               # Production only: a staging certificate is not browser-trusted,
               # and HSTS on an untrusted certificate locks visitors out (demo #90).
               [ "$(a cert-manager.io/cluster-issuer)" = "letsencrypt-production" ] || fail "${name}: not issued by letsencrypt-production"

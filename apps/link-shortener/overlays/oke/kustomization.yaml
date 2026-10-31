@@ -11,9 +11,10 @@ resources:
   # Named link-creation tokens (ADR 0020), mounted into the backend.
   # Add, rotate: scripts/seal-link-tokens.sh NAME... (see its header to revoke).
   - link-tokens-sealedsecret.yaml
-  # https://demo.sandeeprn.in via Traefik, behind the rate limit (ADR 0020).
+  # https://demo.sandeeprn.in via Traefik, behind the rate limit, with HSTS (ADR 0020).
   - ingress.yaml
   - rate-limit-middleware.yaml
+  - hsts-middleware.yaml
 patches:
   - path: service-loadbalancer.yaml
   # Two nodes in different fault domains: require one pod per node, so a node
