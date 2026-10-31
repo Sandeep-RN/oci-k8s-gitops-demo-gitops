@@ -12,7 +12,9 @@ resources:
   # Add, rotate: scripts/seal-link-tokens.sh NAME... (see its header to revoke).
   - link-tokens-sealedsecret.yaml
   # https://demo.sandeeprn.in via Traefik, behind the rate limit (ADR 0020).
-  - ingress.yaml
+  # TEMPORARY (demo #88 delete test): Ingress removed so ArgoCD prunes it and
+  # external-dns deletes demo.sandeeprn.in. Reverted by the next PR.
+  # - ingress.yaml
   - rate-limit-middleware.yaml
 patches:
   - path: service-loadbalancer.yaml
