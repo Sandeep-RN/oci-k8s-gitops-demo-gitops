@@ -5,11 +5,14 @@ today to the short-lived OKE target (ADR 0015), later to a single-node k3s
 cluster on OCI Always Free. Once ArgoCD runs, **nothing is applied by hand
 with kubectl**: change manifests here and let ArgoCD sync.
 
-> **Status (2026-10-25):** running on OKE: the link shortener and PostgreSQL
-> (sealed credentials, nightly backups to Object Storage), Sealed Secrets,
-> and kube-prometheus-stack with the redirect SLO rules, burn-rate alerts to
-> Discord and a Grafana dashboard. Next: the k3s cluster root, Ingress and TLS,
-> once the Always Free node exists.
+> **Status (2026-11-01):** running on OKE and served at
+> https://demo.sandeeprn.in: Traefik behind the free NLB, cert-manager
+> (Let's Encrypt production) and external-dns, the link shortener and
+> PostgreSQL (sealed credentials, token-gated link creation, nightly backups to
+> Object Storage), Sealed Secrets, and kube-prometheus-stack with the redirect
+> SLO rules, burn-rate alerts to Discord and a Grafana dashboard. Next: the
+> k3s cluster root, once the Always Free node exists. Operating the edge:
+> [edge runbook](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md).
 
 Part of a three-repo project. Architecture, ADRs and the issue tracker live in
 [oci-k8s-gitops-demo](https://github.com/Sandeep-RN/oci-k8s-gitops-demo);
