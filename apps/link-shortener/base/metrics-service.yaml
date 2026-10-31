@@ -1,5 +1,5 @@
-# A separate Service for metrics only. The "backend" Service becomes the public
-# load balancer on OKE; adding the metrics port there would publish /metrics.
+# A separate Service for metrics only. The "backend" Service is what the public
+# Ingress routes to; keeping the metrics port off it keeps /metrics unpublished.
 apiVersion: v1
 kind: Service
 metadata:
