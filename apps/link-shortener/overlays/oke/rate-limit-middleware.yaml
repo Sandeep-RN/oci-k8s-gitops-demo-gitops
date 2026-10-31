@@ -14,9 +14,13 @@ metadata:
   name: rate-limit
   namespace: link-shortener
 spec:
+  # Per bucket. Requests spread over about 4 buckets (2 replicas x the NLB's
+  # and the other node's address), so the whole site gets about 4x this. At
+  # 20/s with burst 40, a 600-request burst from one laptop (~56/s, the most
+  # it could send) got no 429 at all (2026-10-31, demo #88).
   rateLimit:
     # Requests per second per bucket, sustained.
-    average: 20
+    average: 5
     period: 1s
     # Short spikes allowed above the average (a page load, a retry).
-    burst: 40
+    burst: 10
