@@ -281,6 +281,11 @@ jobs:
             has --registry=txt
             has "--txt-owner-id=${owner}"
             has --txt-prefix=edns-
+            # The NLB's private IP is in the Ingress status too; it must never
+            # reach public DNS.
+            has --exclude-target-net=10.0.0.0/8
+            has --exclude-target-net=172.16.0.0/12
+            has --exclude-target-net=192.168.0.0/16
             # DNS only: the global flag must be off (Ingresses are checked below).
             if grep -q -- '^--cloudflare-proxied' <<<"$args"; then fail "${f}: records must be DNS only"; fi
             [ "$(yq "${container} | .env[]? | select(.name == \"CF_API_TOKEN\") | .valueFrom.secretKeyRef.name" "$f")" = "cloudflare-api-token" ] || fail "${f}: CF_API_TOKEN is not from Secret cloudflare-api-token"
