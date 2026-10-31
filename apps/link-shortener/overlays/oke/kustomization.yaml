@@ -16,8 +16,8 @@ resources:
   - rate-limit-middleware.yaml
   - hsts-middleware.yaml
 # The backend Service stays ClusterIP from the base: the Ingress above is the
-# only way in. It was a LoadBalancer on the Flexible LB until cutover step 2
-# (demo #91); changing the type released that LB and its public IP.
+# only way in (ADR 0020). Making it a LoadBalancer again would create a second
+# public address that skips TLS, HSTS and the rate limit; CI rejects it.
 patches:
   # Two nodes in different fault domains: require one pod per node, so a node
   # drain exercises the PDB for real (it cannot on single-node k3s, ADR 0001).
