@@ -326,7 +326,9 @@ jobs:
               a() { yq "${ing} | .metadata.annotations[\"$1\"] // \"\"" <<<"$out"; }
               [ "$(yq "${ing} | .spec.ingressClassName" <<<"$out")" = "traefik" ] || fail "${name}: ingressClassName is not traefik"
               tr ',' '\n' <<<"$(a traefik.ingress.kubernetes.io/router.middlewares)" | tr -d ' ' | grep -qFx -- "$ref" || fail "${name}: rate-limit Middleware (${ref}) is not attached"
-              [[ "$(a cert-manager.io/cluster-issuer)" =~ ^letsencrypt-(staging|production)$ ]] || fail "${name}: not issued by a Let's Encrypt ClusterIssuer"
+              # Production only: a staging certificate is not browser-trusted,
+              # and HSTS on an untrusted certificate locks visitors out (demo #90).
+              [ "$(a cert-manager.io/cluster-issuer)" = "letsencrypt-production" ] || fail "${name}: not issued by letsencrypt-production"
               [ "$(a external-dns.alpha.kubernetes.io/cloudflare-proxied)" = "false" ] || fail "${name}: must be DNS only (cloudflare-proxied \"false\")"
               # The loops below would pass on zero rules, and a defaultBackend
               # would route around them: require rules, forbid defaultBackend.
