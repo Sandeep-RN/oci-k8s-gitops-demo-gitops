@@ -4,8 +4,9 @@ kind: Kustomization
 # and ClusterIssuers find their Cloudflare token Secret there.
 #
 # cloudflare-api-token-sealedsecret.yaml is added to this list by
-# scripts/seal-cloudflare-token.sh, run by the owner. Until then both issuers
-# exist but cannot get certificates (not Ready). Keep `resources` the last key.
+# `scripts/seal-cloudflare-token.sh cert-manager`, run by the owner. Until then
+# both issuers exist but cannot get certificates (not Ready). Keep `resources`
+# the last key.
 resources:
   - clusterissuers.yaml
   - cloudflare-api-token-sealedsecret.yaml

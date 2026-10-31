@@ -237,6 +237,96 @@ jobs:
             echo "::endgroup::"
           done
 
+      # ADR 0020: external-dns manages only sandeeprn.in records it owns, only
+      # from Ingresses, DNS only (never proxied). The owner id and TXT prefix
+      # are pinned per cluster: changing either after deployment orphans the
+      # live records, because the new identity does not own them, so `sync`
+      # neither updates nor deletes them.
+      - name: Assert external-dns settings (ADR 0020)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail() { echo "FAIL: $*"; exit 1; }
+          files=(rendered/*-external-dns.yaml)
+          [ ${#files[@]} -gt 0 ] || fail "no rendered external-dns app found"
+          for f in "${files[@]}"; do
+            echo "::group::${f}"
+            cluster=$(basename "$f" -external-dns.yaml)
+            # Never change these for a running cluster (see above).
+            case "$cluster" in
+              oke) owner=oci-demo-oke ;;
+              *) fail "${f}: no pinned TXT owner id for cluster ${cluster}" ;;
+            esac
+            container='select(.kind == "Deployment" and .metadata.name == "external-dns") | .spec.template.spec.containers[] | select(.name == "external-dns")'
+            args=$(yq "${container} | .args[]" "$f")
+            # Fixed strings: the dot in sandeeprn.in must not match any character.
+            has() { grep -qFx -- "$1" <<<"$args" || fail "${f}: missing $1"; }
+            only() { [ "$(grep -c -- "^$1=" <<<"$args")" -eq 1 ] || fail "${f}: more than one $1"; }
+            has --provider=cloudflare
+            has --source=ingress
+            only --source
+            has --domain-filter=sandeeprn.in
+            only --domain-filter
+            has --policy=sync
+            has --registry=txt
+            has "--txt-owner-id=${owner}"
+            has --txt-prefix=edns-
+            # DNS only: the global flag must be off (Ingresses are checked below).
+            if grep -q -- '^--cloudflare-proxied' <<<"$args"; then fail "${f}: records must be DNS only"; fi
+            [ "$(yq "${container} | .env[]? | select(.name == \"CF_API_TOKEN\") | .valueFrom.secretKeyRef.name" "$f")" = "cloudflare-api-token" ] || fail "${f}: CF_API_TOKEN is not from Secret cloudflare-api-token"
+            echo "ok"
+            echo "::endgroup::"
+          done
+          # Chart version must be an exact X.Y.Z, never a range or "latest".
+          for app in argocd/clusters/*/apps/external-dns.yaml; do
+            v=$(yq '.spec.sources[] | select(.chart == "external-dns") | .targetRevision' "$app")
+            [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "${app}: chart version '${v}' is not pinned"
+          done
+
+      # ADR 0020: every Ingress of a deployed link-shortener overlay is served by
+      # Traefik over TLS from a Let's Encrypt issuer, is not proxied by
+      # Cloudflare, sends everything to the backend Service, and goes through
+      # the rate-limit Middleware shipped in the same overlay.
+      - name: Assert app Ingress and rate limit (ADR 0020)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail() { echo "FAIL: $*"; exit 1; }
+          apps=(argocd/clusters/*/apps/link-shortener.yaml)
+          [ ${#apps[@]} -gt 0 ] || fail "no link-shortener Application found"
+          for app in "${apps[@]}"; do
+            path=$(yq '.spec.source.path' "$app")
+            echo "::group::${path}"
+            out=$(kubectl kustomize "$path")
+            names=$(yq 'select(.kind == "Ingress") | .metadata.name' <<<"$out")
+            [ -n "$names" ] || fail "${path}: no Ingress"
+            mw=$(yq 'select(.kind == "Middleware" and .metadata.name == "rate-limit")' <<<"$out")
+            [ -n "$mw" ] || fail "${path}: no rate-limit Middleware"
+            [ "$(yq '.spec.rateLimit.average // 0' <<<"$mw")" -gt 0 ] || fail "${path}: rate-limit has no average"
+            [ "$(yq '.spec.rateLimit.burst // 0' <<<"$mw")" -gt 0 ] || fail "${path}: rate-limit has no burst"
+            # Traefik's name for a CRD Middleware: <namespace>-<name>@kubernetescrd.
+            ref="$(yq '.metadata.namespace' <<<"$mw")-rate-limit@kubernetescrd"
+            for name in $names; do
+              ing="select(.kind == \"Ingress\" and .metadata.name == \"${name}\")"
+              a() { yq "${ing} | .metadata.annotations[\"$1\"] // \"\"" <<<"$out"; }
+              [ "$(yq "${ing} | .spec.ingressClassName" <<<"$out")" = "traefik" ] || fail "${name}: ingressClassName is not traefik"
+              tr ',' '\n' <<<"$(a traefik.ingress.kubernetes.io/router.middlewares)" | tr -d ' ' | grep -qFx -- "$ref" || fail "${name}: rate-limit Middleware (${ref}) is not attached"
+              [[ "$(a cert-manager.io/cluster-issuer)" =~ ^letsencrypt-(staging|production)$ ]] || fail "${name}: not issued by a Let's Encrypt ClusterIssuer"
+              [ "$(a external-dns.alpha.kubernetes.io/cloudflare-proxied)" = "false" ] || fail "${name}: must be DNS only (cloudflare-proxied \"false\")"
+              # The loops below would pass on zero rules, and a defaultBackend
+              # would route around them: require rules, forbid defaultBackend.
+              [ "$(yq "${ing} | .spec.rules | length" <<<"$out")" -gt 0 ] || fail "${name}: no rules"
+              [ "$(yq "${ing} | .spec | has(\"defaultBackend\")" <<<"$out")" = "false" ] || fail "${name}: defaultBackend bypasses the host rules"
+              # Every rule host is covered by a TLS entry with a Secret.
+              for host in $(yq "${ing} | .spec.rules[].host" <<<"$out"); do
+                [ -n "$(yq "${ing} | .spec.tls[]? | select(.hosts[]? == \"${host}\") | .secretName" <<<"$out")" ] || fail "${name}: ${host} has no TLS Secret"
+              done
+              [ -z "$(yq "${ing} | .spec.rules[].http.paths[] | select(.backend.service.name != \"backend\") | .path" <<<"$out")" ] || fail "${name}: a path does not go to the backend Service"
+            done
+            echo "ok"
+            echo "::endgroup::"
+          done
+
       - name: Reject plain Secrets
         run: |
           set -euo pipefail

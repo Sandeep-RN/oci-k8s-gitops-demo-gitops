@@ -69,7 +69,7 @@ service:
 providers:
   kubernetesIngress:
     enabled: true
-    # Publish the NLB address in Ingress status; external-dns reads it later.
+    # Publish the NLB address in Ingress status; external-dns reads it.
     publishedService:
       enabled: true
   # Kept on: the HSTS and rate-limit Middlewares (ADR 0020) are CRDs.

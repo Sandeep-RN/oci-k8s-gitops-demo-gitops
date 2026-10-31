@@ -22,10 +22,14 @@ application code and CI live in
 apps/<name>/base               Kustomize base: Deployment, Services, PDB, Postgres StatefulSet,
                                backup CronJob, ServiceMonitor, SLO rules, Grafana dashboard
 apps/<name>/overlays/k3s       Always Free k3s node
-apps/<name>/overlays/oke       Short-lived OKE target (ADR 0015): Flexible LB, strict spread
+apps/<name>/overlays/oke       Short-lived OKE target (ADR 0015): Flexible LB, strict spread,
+                               Ingress for demo.sandeeprn.in with a rate limit (ADR 0020)
 argocd/install                 ArgoCD, pinned upstream install (ArgoCD manages itself from here)
 argocd/clusters/<cluster>/     root.yaml (app of apps) + apps/ (AppProject, Applications)
-platform/<addon>/              cluster add-ons shared by all clusters (sealed-secrets, pinned)
+edge/<component>/              Helm values for Traefik, cert-manager, external-dns (ADR 0020);
+                               chart pinned in the cluster's Application
+platform/<addon>/              cluster add-ons and their sealed tokens (sealed-secrets,
+                               cert-manager issuers, external-dns)
 monitoring/kube-prometheus-stack/  Helm values (shared + per cluster); chart pinned in the cluster's monitoring app
 monitoring/<cluster>/          objects the chart does not create (Grafana admin and Discord webhook SealedSecrets)
 tests/prometheus/              promtool unit tests for the alert rules (run in CI)
@@ -66,6 +70,16 @@ with `scripts/seal-link-tokens.sh NAME...` (hidden prompt; values live in the
 password manager); revoke by deleting the key (see the script header). Anything
 that creates links (the demo repo's verify script, a future k6 job) reads its
 token from the `LINK_TOKEN` environment variable, never from a repo.
+
+**Cloudflare tokens** (ADR 0020): cert-manager and external-dns each have
+their own token (Zone:DNS:Edit and Zone:Zone:Read on `sandeeprn.in` only).
+Seal or rotate with `scripts/seal-cloudflare-token.sh cert-manager` or
+`scripts/seal-cloudflare-token.sh external-dns` (hidden prompt).
+
+**external-dns** owns `demo.sandeeprn.in` through a TXT record (owner id
+`oci-demo-oke`, prefix `edns-`). Never change either on a running cluster:
+the existing records would be orphaned. Before tearing the cluster down,
+delete the Ingress first so external-dns removes the record.
 
 ## Working here
 

@@ -1,0 +1,5 @@
+# OKE-only external-dns values, layered on values.yaml (ADR 0020).
+
+# This cluster's identity in the TXT owner records. NEVER change it while the
+# cluster runs (see values.yaml); CI pins it.
+txtOwnerId: oci-demo-oke
