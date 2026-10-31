@@ -26,6 +26,9 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001 # matches the numeric UID in the app Dockerfile
+        # Group owner of the link-tokens files, so they can be 0440 (not
+        # world-readable) and the app user still reads them.
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       # ScheduleAnyway: on the single k3s node both pods must still schedule.
@@ -60,6 +63,19 @@ spec:
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef: { name: postgres-app-credentials, key: password }
+            # Link creation needs a named token (ADR 0020). Both are the app's
+            # defaults; set here so the mount below and the app cannot drift.
+            - name: LINK_CREATE_MODE
+              value: token
+            - name: LINK_TOKENS_DIR
+              value: /etc/link-shortener/tokens
+          volumeMounts:
+            # The whole Secret, one file per token. Never use subPath here: a
+            # subPath mount is never updated, so a revoked token would keep
+            # working until the pod restarts.
+            - name: link-tokens
+              mountPath: /etc/link-shortener/tokens
+              readOnly: true
           ports:
             - name: http
               containerPort: 8000
@@ -91,3 +107,12 @@ spec:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 5
             timeoutSeconds: 2
+      volumes:
+        # Named link-creation tokens, from each cluster overlay's SealedSecret.
+        # Not optional: if the Secret is missing, new pods wait in
+        # ContainerCreating while the old ones keep serving (maxUnavailable 0),
+        # rather than starting and answering 401 to every create.
+        - name: link-tokens
+          secret:
+            secretName: link-tokens
+            defaultMode: 0440

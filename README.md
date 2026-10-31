@@ -59,6 +59,14 @@ client-side apply. The ArgoCD UI is reached only by `kubectl port-forward`
 Only **SealedSecret** manifests may be committed, never plain Secrets (ADR
 0006). Sealing keys are backed up outside this repo.
 
+**Link-creation tokens** (ADR 0020): creating a link needs a named token;
+redirects do not. All tokens are keys of one SealedSecret, `link-tokens` in
+the OKE overlay, mounted into the backend as one file per token. Add or rotate
+with `scripts/seal-link-tokens.sh NAME...` (hidden prompt; values live in the
+password manager); revoke by deleting the key (see the script header). Anything
+that creates links (the demo repo's verify script, a future k6 job) reads its
+token from the `LINK_TOKEN` environment variable, never from a repo.
+
 ## Working here
 
 - Install hooks once: `pip install pre-commit && pre-commit install`
