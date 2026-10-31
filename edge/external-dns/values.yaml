@@ -40,6 +40,17 @@ txtPrefix: edns-
 # Not proxied: no --cloudflare-proxied flag, so records are DNS only (the
 # provider's default). TLS ends at Traefik with our own certificate (ADR 0020).
 
+extraArgs:
+  # Never publish a private address. The OCI NLB lists its private IP next to
+  # the public one in the Service status, Traefik copies both into the
+  # Ingress status, and external-dns would publish both: clients that pick the
+  # private one time out (seen live on 2026-10-31, demo #88). These are the
+  # RFC 1918 ranges, not this VCN's CIDR, so they hold on any cluster.
+  exclude-target-net:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+
 # Re-check every minute, and react to Ingress changes within seconds.
 interval: 1m
 triggerLoopOnEvent: true
