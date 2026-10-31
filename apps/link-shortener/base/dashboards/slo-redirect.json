@@ -439,7 +439,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"2[0-9][0-9]\"}[$__rate_interval]))",
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"2[0-9][0-9]\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "2xx",
           "refId": "A"
         },
@@ -448,7 +448,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"3[0-9][0-9]\"}[$__rate_interval]))",
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"3[0-9][0-9]\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "3xx",
           "refId": "B"
         },
@@ -457,7 +457,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"4[0-9][0-9]\"}[$__rate_interval]))",
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"4[0-9][0-9]\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "4xx",
           "refId": "C"
         },
@@ -466,7 +466,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"5[0-9][0-9]\"}[$__rate_interval]))",
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"5[0-9][0-9]\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "5xx",
           "refId": "D"
         },
@@ -475,7 +475,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"5..\"}[$__rate_interval])) / sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\"}[$__rate_interval]))",
+          "expr": "(sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"5..\"}[$__rate_interval])) or vector(0)) / sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\"}[$__rate_interval]))",
           "legendFormat": "5xx share",
           "refId": "E"
         }
