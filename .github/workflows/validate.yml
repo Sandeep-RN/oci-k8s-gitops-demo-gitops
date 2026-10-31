@@ -193,6 +193,46 @@ jobs:
             [[ "$v" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "${app}: chart version '${v}' is not pinned"
           done
 
+      # ADR 0020: in every deployed link-shortener overlay, the backend reads its
+      # link-creation tokens from the link-tokens Secret, mounted whole (a
+      # subPath mount never sees a rotation or revocation) at the directory the
+      # app is told to read. The overlay must ship that Secret as a strict-scoped
+      # SealedSecret: the volume is not optional, so without it new pods never
+      # start (old ones keep serving, but the rollout stalls).
+      - name: Assert link-token wiring (ADR 0020)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail() { echo "FAIL: $*"; exit 1; }
+          apps=(argocd/clusters/*/apps/link-shortener.yaml)
+          [ ${#apps[@]} -gt 0 ] || fail "no link-shortener Application found"
+          for app in "${apps[@]}"; do
+            path=$(yq '.spec.source.path' "$app")
+            echo "::group::${path}"
+            out=$(kubectl kustomize "$path")
+            spec='select(.kind == "Deployment" and .metadata.name == "backend") | .spec.template.spec'
+            vol=$(yq "${spec} | .volumes[]? | select(.secret.secretName == \"link-tokens\") | .name" <<<"$out")
+            [ -n "$vol" ] || fail "${path}: backend has no volume from Secret link-tokens"
+            [ "$(yq "${spec} | .volumes[] | select(.name == \"${vol}\") | .secret.optional // false" <<<"$out")" = "false" ] || fail "${path}: link-tokens volume must not be optional"
+            c="${spec} | .containers[] | select(.name == \"backend\")"
+            m="${c} | .volumeMounts[]? | select(.name == \"${vol}\")"
+            mount=$(yq "${m} | .mountPath" <<<"$out")
+            [ -n "$mount" ] || fail "${path}: link-tokens volume is not mounted in the backend container"
+            [ -z "$(yq "${m} | .subPath // \"\"" <<<"$out")" ] || fail "${path}: subPath mount never sees token updates"
+            [ "$(yq "${c} | .env[]? | select(.name == \"LINK_TOKENS_DIR\") | .value" <<<"$out")" = "$mount" ] || fail "${path}: LINK_TOKENS_DIR is not the mount path"
+            [ "$(yq "${c} | .env[]? | select(.name == \"LINK_CREATE_MODE\") | .value" <<<"$out")" = "token" ] || fail "${path}: LINK_CREATE_MODE is not token"
+            ss='select(.kind == "SealedSecret" and .metadata.name == "link-tokens")'
+            sealed=$(yq "$ss" <<<"$out")
+            [ -n "$sealed" ] || fail "${path}: no link-tokens SealedSecret"
+            [ "$(yq '.spec.encryptedData | length' <<<"$sealed")" -gt 0 ] || fail "${path}: link-tokens holds no tokens"
+            # Strict scope: no annotation may widen it to the namespace or cluster.
+            if grep -qE 'sealedsecrets\.bitnami\.com/(cluster|namespace)-wide' <<<"$sealed"; then
+              fail "${path}: link-tokens must be sealed with --scope strict"
+            fi
+            echo "ok"
+            echo "::endgroup::"
+          done
+
       - name: Reject plain Secrets
         run: |
           set -euo pipefail
