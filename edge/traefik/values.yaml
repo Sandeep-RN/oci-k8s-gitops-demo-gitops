@@ -76,6 +76,22 @@ providers:
   kubernetesCRD:
     enabled: true
 
+# Edge metrics for Prometheus (demo #92). The metrics entrypoint (:9100) is only
+# on the pods and a ClusterIP Service for the ServiceMonitor; it is not added
+# to the NLB Service, so nothing is scraped from the internet. The SLO stays
+# measured at the app (ADR 0008, 0019); these series only show edge problems.
+metrics:
+  prometheus:
+    service:
+      enabled: true
+    # The chart refuses to render a ServiceMonitor unless the CRD is installed,
+    # and CI renders without a cluster. The CRD comes from the monitoring app;
+    # the Application retries until it exists (see traefik.yaml).
+    disableAPICheck: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
 # Admin UIs stay off the public internet (ADR 0014): no dashboard route, and
 # the API is not served on the public entrypoints.
 api:
