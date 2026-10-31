@@ -1,0 +1,22 @@
+# Rate limit for the public host (ADR 0020).
+#
+# It is NOT per client today. The NLB does not preserve source addresses, and
+# externalTrafficPolicy Cluster rewrites them again, so Traefik sees only the
+# NLB's or a node's private address. The default source criterion (the remote
+# address) therefore puts all clients into a few shared buckets, and each
+# Traefik replica keeps its own buckets in memory. So this is a flood guard
+# for the backend: set high enough that normal use never hits it, low enough
+# that a scripted burst gets 429. Per-client limits need proxy protocol on the
+# NLB (Sandeep-RN/oci-k8s-gitops-demo#97).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: link-shortener
+spec:
+  rateLimit:
+    # Requests per second per bucket, sustained.
+    average: 20
+    period: 1s
+    # Short spikes allowed above the average (a page load, a retry).
+    burst: 40

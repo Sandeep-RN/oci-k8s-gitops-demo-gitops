@@ -1,0 +1,49 @@
+# external-dns keeps demo.sandeeprn.in in Cloudflare pointed at the Traefik
+# NLB, read from the app's Ingress (ADR 0020, replacing ADR 0013's Terraform
+# record). Three sources: the pinned upstream chart, this repo for the values
+# file, and this repo's platform/external-dns for the sealed Cloudflare token.
+#
+# Teardown (#13): delete the Ingress (or this app) BEFORE the cluster, so the
+# record and its TXT owner record are removed. Otherwise remove both by hand.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd
+  annotations:
+    # After sealed-secrets (wave -1), which decrypts the token.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  # "default", not "demo": it creates a ClusterRole to read Ingresses.
+  project: default
+  sources:
+    - repoURL: https://kubernetes-sigs.github.io/external-dns/
+      chart: external-dns
+      # Pinned (external-dns v0.23.0); CI renders this exact version with the values below.
+      targetRevision: 1.23.0
+      helm:
+        releaseName: external-dns
+        valueFiles:
+          - $values/edge/external-dns/values.yaml
+          - $values/edge/external-dns/values-oke.yaml
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      path: platform/external-dns
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # On a fresh cluster the SealedSecret CRD may not exist yet on the first
+      # sync: skip its dry run and retry instead of failing.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

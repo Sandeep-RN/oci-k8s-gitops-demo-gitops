@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# No namespace field: the sealed Secret is strict-scoped to external-dns, and the
+# Application's destination is the same namespace.
+#
+# cloudflare-api-token-sealedsecret.yaml is added to this list by
+# `scripts/seal-cloudflare-token.sh external-dns`, run by the owner. Until then
+# this kustomization is empty and does not build, so neither CI nor ArgoCD can
+# render the external-dns Application (chart included). Seal before merging.
+# Keep `resources` the last key.
+resources:

@@ -1,0 +1,51 @@
+# external-dns values (ADR 0020). Chart version is pinned in
+# argocd/clusters/<cluster>/apps/external-dns.yaml. CI asserts the settings
+# below on the rendered chart.
+
+provider:
+  name: cloudflare
+
+# Its own token (Zone:DNS:Edit + Zone:Zone:Read on sandeeprn.in), separate from
+# cert-manager's: a leak or rotation affects one component, and Cloudflare's
+# audit log shows which one acted. Sealed by scripts/seal-cloudflare-token.sh.
+env:
+  - name: CF_API_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-api-token
+        key: api-token
+
+# Ingress only. Services are excluded on purpose: the Traefik and app
+# LoadBalancer Services must never publish records of their own.
+sources:
+  - ingress
+
+# The only zone it may touch. A host outside it in an Ingress is ignored.
+domainFilters:
+  - sandeeprn.in
+
+# sync: also deletes records when their Ingress goes away (an orphaned A record
+# would point at a released IP). It only ever deletes records whose TXT owner
+# record carries txtOwnerId below, so the blog's records are never touched.
+policy: sync
+
+registry: txt
+# txtOwnerId is per cluster (values-<cluster>.yaml), so a later k3s instance
+# never claims OKE's records. NEVER change txtOwnerId or txtPrefix on a running
+# cluster: the existing records would no longer be owned, so they would be
+# neither updated nor deleted. CI pins both values.
+# A fixed prefix keeps the TXT owner record off the A record's own name.
+txtPrefix: edns-
+
+# Not proxied: no --cloudflare-proxied flag, so records are DNS only (the
+# provider's default). TLS ends at Traefik with our own certificate (ADR 0020).
+
+# Re-check every minute, and react to Ingress changes within seconds.
+interval: 1m
+triggerLoopOnEvent: true
+
+# Sized for 1 OCPU / 8 GB nodes shared with the app, Postgres and monitoring.
+# One replica: a short outage only delays a DNS change.
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits: { memory: 64Mi }
