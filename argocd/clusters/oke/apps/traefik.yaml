@@ -30,6 +30,15 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    # The ServiceMonitor needs the monitoring CRDs. Both apps sync in wave -1,
+    # so on a fresh cluster this one can run first; retrying lets it succeed
+    # once the CRDs exist.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
     syncOptions:
       - CreateNamespace=true
       # Traefik's CRDs exceed the client-side apply annotation size limit.
