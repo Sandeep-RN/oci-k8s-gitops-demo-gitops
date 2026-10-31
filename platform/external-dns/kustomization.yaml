@@ -9,3 +9,4 @@ kind: Kustomization
 # render the external-dns Application (chart included). Seal before merging.
 # Keep `resources` the last key.
 resources:
+  - cloudflare-api-token-sealedsecret.yaml
