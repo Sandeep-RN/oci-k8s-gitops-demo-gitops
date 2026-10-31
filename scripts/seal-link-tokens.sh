@@ -58,6 +58,13 @@ from_files=()
 for name in "$@"; do
   read -r -s -p "Value for link token '${name}' (hidden): " value
   echo >&2
+  # A paste from Windows can carry a CR, which the app would strip; drop it
+  # here so the length check below sees what the app will see.
+  value=${value%$'\r'}
+  if [[ "$value" =~ [[:space:]] ]]; then
+    echo "token '${name}' contains whitespace; paste the value only" >&2
+    exit 1
+  fi
   if [ "${#value}" -lt "$min_length" ]; then
     echo "token '${name}' is shorter than ${min_length} characters; the app would ignore it" >&2
     exit 1
@@ -70,19 +77,21 @@ unset value
 # --scope strict binds every value to this exact name and namespace.
 # --merge-into replaces only the keys given and keeps the others.
 sealed="$tmp/sealed.yaml"
+secret_json() {
+  kubectl create secret generic link-tokens -n link-shortener \
+    --dry-run=client -o json "${from_files[@]}"
+}
+seal() { kubeseal --cert "$cert" --format yaml --scope strict "$@"; }
 if [ -f "$out" ]; then
   cp "$out" "$sealed"
-  kubectl create secret generic link-tokens -n link-shortener \
-      --dry-run=client -o json "${from_files[@]}" |
-    kubeseal --cert "$cert" --format yaml --scope strict --merge-into "$sealed"
+  secret_json | seal --merge-into "$sealed"
 else
-  kubectl create secret generic link-tokens -n link-shortener \
-      --dry-run=client -o json "${from_files[@]}" |
-    kubeseal --cert "$cert" --format yaml --scope strict >"$sealed"
+  secret_json | seal >"$sealed"
 fi
 grep -q '^kind: SealedSecret' "$sealed" || { echo "output is not a SealedSecret" >&2; exit 1; }
 for name in "$@"; do
-  grep -q "^    ${name}: " "$sealed" || { echo "token '${name}' is missing from the output" >&2; exit 1; }
+  # Escape "." so a name like a.b cannot match a key axb.
+  grep -q "^    ${name//./\\.}: " "$sealed" || { echo "token '${name}' is missing from the output" >&2; exit 1; }
 done
 
 mv "$sealed" "$out"

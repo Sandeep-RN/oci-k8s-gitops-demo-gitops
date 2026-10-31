@@ -210,23 +210,27 @@ jobs:
             path=$(yq '.spec.source.path' "$app")
             echo "::group::${path}"
             out=$(kubectl kustomize "$path")
-            spec='select(.kind == "Deployment" and .metadata.name == "backend") | .spec.template.spec'
-            vol=$(yq "${spec} | .volumes[]? | select(.secret.secretName == \"link-tokens\") | .name" <<<"$out")
+            pod_spec='select(.kind == "Deployment" and .metadata.name == "backend") | .spec.template.spec'
+            # One name per line; documents that do not match print nothing.
+            vol=$(yq "${pod_spec} | .volumes[]? | select(.secret.secretName == \"link-tokens\") | .name" <<<"$out")
             [ -n "$vol" ] || fail "${path}: backend has no volume from Secret link-tokens"
-            [ "$(yq "${spec} | .volumes[] | select(.name == \"${vol}\") | .secret.optional // false" <<<"$out")" = "false" ] || fail "${path}: link-tokens volume must not be optional"
-            c="${spec} | .containers[] | select(.name == \"backend\")"
-            m="${c} | .volumeMounts[]? | select(.name == \"${vol}\")"
-            mount=$(yq "${m} | .mountPath" <<<"$out")
+            [ "$(wc -l <<<"$vol")" -eq 1 ] || fail "${path}: more than one link-tokens volume"
+            [ "$(yq "${pod_spec} | .volumes[] | select(.name == \"${vol}\") | .secret.optional // false" <<<"$out")" = "false" ] || fail "${path}: link-tokens volume must not be optional"
+            container="${pod_spec} | .containers[] | select(.name == \"backend\")"
+            token_mount="${container} | .volumeMounts[]? | select(.name == \"${vol}\")"
+            mount=$(yq "${token_mount} | .mountPath" <<<"$out")
             [ -n "$mount" ] || fail "${path}: link-tokens volume is not mounted in the backend container"
-            [ -z "$(yq "${m} | .subPath // \"\"" <<<"$out")" ] || fail "${path}: subPath mount never sees token updates"
-            [ "$(yq "${c} | .env[]? | select(.name == \"LINK_TOKENS_DIR\") | .value" <<<"$out")" = "$mount" ] || fail "${path}: LINK_TOKENS_DIR is not the mount path"
-            [ "$(yq "${c} | .env[]? | select(.name == \"LINK_CREATE_MODE\") | .value" <<<"$out")" = "token" ] || fail "${path}: LINK_CREATE_MODE is not token"
-            ss='select(.kind == "SealedSecret" and .metadata.name == "link-tokens")'
-            sealed=$(yq "$ss" <<<"$out")
+            [ -z "$(yq "${token_mount} | .subPath // \"\"" <<<"$out")" ] || fail "${path}: subPath mount never sees token updates"
+            [ "$(yq "${container} | .env[]? | select(.name == \"LINK_TOKENS_DIR\") | .value" <<<"$out")" = "$mount" ] || fail "${path}: LINK_TOKENS_DIR is not the mount path"
+            [ "$(yq "${container} | .env[]? | select(.name == \"LINK_CREATE_MODE\") | .value" <<<"$out")" = "token" ] || fail "${path}: LINK_CREATE_MODE is not token"
+            sealed=$(yq 'select(.kind == "SealedSecret" and .metadata.name == "link-tokens")' <<<"$out")
             [ -n "$sealed" ] || fail "${path}: no link-tokens SealedSecret"
+            # Strict scope binds the ciphertext to this namespace; any other one
+            # (say, from a kustomize namespace change) makes it undecryptable.
+            [ "$(yq '.metadata.namespace' <<<"$sealed")" = "link-shortener" ] || fail "${path}: link-tokens is not in namespace link-shortener"
             [ "$(yq '.spec.encryptedData | length' <<<"$sealed")" -gt 0 ] || fail "${path}: link-tokens holds no tokens"
             # Strict scope: no annotation may widen it to the namespace or cluster.
-            if grep -qE 'sealedsecrets\.bitnami\.com/(cluster|namespace)-wide' <<<"$sealed"; then
+            if grep -qE 'sealedsecrets\.bitnami\.com/(cluster|namespace)-wide: "?true' <<<"$sealed"; then
               fail "${path}: link-tokens must be sealed with --scope strict"
             fi
             echo "ok"
