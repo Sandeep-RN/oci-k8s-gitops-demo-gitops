@@ -366,6 +366,120 @@
           "refId": "C"
         }
       ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Edge (Traefik): requests per second by status class, and 5xx share",
+      "description": "Measured at Traefik, before the app. Left axis: requests per second by status class (all routes, ports 80 and 443; port 80 mostly shows the HTTPS redirect as 3xx). Right axis: share of requests answered 5xx. The SLO itself is measured at the app (panels above); this shows problems the app cannot see, such as Traefik failing to reach it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "5xx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "5xx share"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"2[0-9][0-9]\"}[$__rate_interval]))",
+          "legendFormat": "2xx",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"3[0-9][0-9]\"}[$__rate_interval]))",
+          "legendFormat": "3xx",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"4[0-9][0-9]\"}[$__rate_interval]))",
+          "legendFormat": "4xx",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"5[0-9][0-9]\"}[$__rate_interval]))",
+          "legendFormat": "5xx",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\",code=~\"5..\"}[$__rate_interval])) / sum(rate(traefik_entrypoint_requests_total{namespace=\"traefik\",entrypoint=~\"web|websecure\"}[$__rate_interval]))",
+          "legendFormat": "5xx share",
+          "refId": "E"
+        }
+      ]
     }
   ]
 }

@@ -121,6 +121,12 @@ jobs:
             grep -qx -- '--api.dashboard=false' <<<"$args" || fail "dashboard is enabled"
             [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "traefik") | .spec.replicas' "$f")" = "2" ] || fail "not 2 replicas"
             [ "$(yq 'select(.kind == "PodDisruptionBudget") | .metadata.name' "$f")" = "traefik" ] || fail "no PodDisruptionBudget"
+            # Edge metrics (demo #92): scraped through a ClusterIP Service and a
+            # ServiceMonitor, never published on the NLB Service.
+            grep -qx -- '--metrics.prometheus=true' <<<"$args" || fail "Prometheus metrics are off"
+            [ "$(yq 'select(.kind == "Service" and .metadata.name == "traefik-metrics") | .spec.type' "$f")" = "ClusterIP" ] || fail "traefik-metrics Service is missing or not ClusterIP"
+            [ "$(yq 'select(.kind == "ServiceMonitor" and .metadata.name == "traefik") | .spec.selector.matchLabels["app.kubernetes.io/component"]' "$f")" = "metrics" ] || fail "no ServiceMonitor selecting the metrics Service"
+            if yq "${svc} | .spec.ports[].port" "$f" | grep -qx 9100; then fail "metrics port 9100 is on the public Service"; fi
             echo "ok"
             echo "::endgroup::"
           done
@@ -129,6 +135,10 @@ jobs:
             v=$(yq '.spec.sources[] | select(.chart == "traefik") | .targetRevision' "$app")
             [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "${app}: chart version '${v}' is not pinned"
           done
+          # The edge panel (demo #92) must query the Traefik series, or it
+          # would silently show "No data".
+          dash=apps/link-shortener/base/dashboards/slo-redirect.json
+          yq '.panels[].targets[]?.expr' "$dash" | grep -q 'traefik_entrypoint_requests_total' || fail "${dash}: no panel queries traefik_entrypoint_requests_total"
 
       - name: Test alerting rules (promtool)
         run: |
