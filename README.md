@@ -5,8 +5,8 @@ today to the short-lived OKE target (ADR 0015), later to a single-node k3s
 cluster on OCI Always Free. Once ArgoCD runs, **nothing is applied by hand
 with kubectl**: change manifests here and let ArgoCD sync.
 
-> **Status (2026-11-01):** running on OKE and served at
-> [demo.sandeeprn.in](https://demo.sandeeprn.in/docs) (API page): Traefik behind the free NLB, cert-manager
+> **Status (2026-11-02):** running on OKE and served at
+> [demo.sandeeprn.in](https://demo.sandeeprn.in/): Traefik behind the free NLB, cert-manager
 > (Let's Encrypt production) and external-dns, the link shortener and
 > PostgreSQL (sealed credentials, token-gated link creation, nightly backups to
 > Object Storage), Sealed Secrets, and kube-prometheus-stack with the redirect
