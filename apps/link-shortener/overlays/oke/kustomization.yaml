@@ -19,6 +19,22 @@ resources:
 # only way in (ADR 0020). Making it a LoadBalancer again would create a second
 # public address that skips TLS, HSTS and the rate limit; CI rejects it.
 patches:
+  # The landing page's example link (demo #103). A short link is a row in this
+  # cluster's database, so its code is per-cluster config. It is set on the
+  # Deployment, not in app-config: the app reads it once at start, and a
+  # changed pod template restarts the pods, while a ConfigMap-only change
+  # would sit unused until someone restarted them. Public, not a secret.
+  # Create the link first (POST /api/links with a token); an unknown code
+  # still leaves the page working, with a link that answers 404.
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: EXAMPLE_LINK_CODE
+          value: seYOHlz
   # Two nodes in different fault domains: require one pod per node, so a node
   # drain exercises the PDB for real (it cannot on single-node k3s, ADR 0001).
   - target:
