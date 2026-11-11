@@ -1,0 +1,49 @@
+# Configuration for the Traefik that k3s ships (ADR 0020, 0022). This cluster
+# has no traefik.yaml: k3s installs and upgrades the chart itself (HelmChart
+# "traefik" in kube-system) and merges the HelmChartConfig from
+# edge/traefik-k3s into its values. This app keeps that config in Git, with
+# the sealed public IP it needs and the ServiceMonitor for the edge panel.
+#
+# The file is not named traefik.yaml on purpose: CI treats that name as the
+# upstream chart behind the OKE load balancer and applies ADR 0020's checks.
+#
+# Synced/Healthy here only means the objects were applied. Whether k3s's Helm
+# job accepted the values shows in kube-system:
+#   kubectl -n kube-system get pods -l helmcharts.helm.cattle.io/chart=traefik
+#   kubectl -n kube-system get svc traefik -o jsonpath='{.spec.externalTrafficPolicy}'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik-config
+  namespace: argocd
+  annotations:
+    # After sealed-secrets (wave -1), which decrypts the public IP.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  # "default", not "demo": it writes to kube-system, which the workload
+  # project deliberately forbids.
+  project: default
+  source:
+    repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+    targetRevision: main
+    path: edge/traefik-k3s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      # prune: removing the HelmChartConfig from Git returns Traefik to k3s's
+      # defaults. ArgoCD prunes only what this app created, never k3s's own
+      # objects in kube-system.
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The SealedSecret and ServiceMonitor CRDs come from other apps and may
+      # not exist yet on a fresh cluster: skip their dry run and retry.
+      - SkipDryRunOnMissingResource=true
+    # If the monitoring CRDs never arrive, the last sync wave (the
+    # ServiceMonitor) keeps failing after these retries; the edge config in
+    # the earlier waves is applied all the same.
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

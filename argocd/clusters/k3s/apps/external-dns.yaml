@@ -1,0 +1,52 @@
+# external-dns keeps demo.sandeeprn.in in Cloudflare pointed at the k3s node's
+# public IP, read from the app's Ingress status (ADR 0020, 0022). There is no
+# load balancer on k3s: Traefik writes that address into the status itself
+# (edge/traefik-k3s). Three sources: the pinned upstream chart, this repo for
+# the values files, and this repo's platform/external-dns for the sealed
+# Cloudflare token (the same sealed file as OKE: the sealing keys are shared).
+#
+# It never takes over a record it does not own. While OKE still holds
+# demo.sandeeprn.in (TXT owner oci-demo-oke), this instance leaves it alone;
+# the switch is "OKE deletes its record, then k3s creates its own" (ADR 0022).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd
+  annotations:
+    # After sealed-secrets (wave -1), which decrypts the token.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  # "default", not "demo": it creates a ClusterRole to read Ingresses.
+  project: default
+  sources:
+    - repoURL: https://kubernetes-sigs.github.io/external-dns/
+      chart: external-dns
+      # Pinned (external-dns v0.23.0); CI renders this exact version with the values below.
+      targetRevision: 1.23.0
+      helm:
+        releaseName: external-dns
+        valueFiles:
+          - $values/edge/external-dns/values.yaml
+          - $values/edge/external-dns/values-k3s.yaml
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      path: platform/external-dns
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # On a fresh cluster the SealedSecret CRD may not exist yet on the first
+      # sync: skip its dry run and retry instead of failing.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

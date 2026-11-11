@@ -1,0 +1,88 @@
+# Values for the Traefik chart that k3s ships (ADR 0020, 0022). k3s owns the
+# release (HelmChart "traefik" in kube-system); it merges this object's
+# valuesContent over its own defaults and re-runs Helm whenever it changes.
+# The name and namespace must be exactly traefik / kube-system, or k3s ignores
+# the object without any error. CI asserts both.
+#
+# valuesContent is a string: no schema checks it, and ArgoCD reports Synced
+# even if k3s's Helm job rejects it. CI therefore renders the bundled chart
+# with these values (k3s-default-values.yaml is k3s's side of the merge) and
+# asserts the settings below.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+  annotations:
+    # After the SealedSecret (wave 0) is decrypted: ArgoCD waits for it to be
+    # healthy first. If it cannot be decrypted (sealing keys not restored),
+    # this config is never applied and Traefik stays on k3s's defaults, which
+    # publish only a private address that external-dns refuses.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        # Local: Traefik sees each visitor's real address, so the per-IP rate
+        # limit counts clients separately (ADR 0022, measured 2026-11-11;
+        # Cluster shows the pod network gateway for everyone). On one node
+        # there is no downside: the only Traefik pod is always local.
+        externalTrafficPolicy: Local
+
+    providers:
+      kubernetesIngress:
+        # Off: the Service status holds the node's PRIVATE IP (OCI maps the
+        # public one outside the VM), and external-dns would have nothing
+        # public to publish. Off also so it cannot compete with ingressEndpoint.
+        publishedService:
+          enabled: false
+        # Written into every Ingress status; external-dns reads it. Kubernetes
+        # expands $(PUBLIC_IP) from the container's environment (below). It
+        # must be a CLI argument: Traefik reads its install configuration from
+        # one source only, and the chart uses arguments.
+        ingressEndpoint:
+          ip: "$(PUBLIC_IP)"
+
+    # The node's public IP. Sealed only because this repo is public and never
+    # holds IPs in plain text (scripts/seal-traefik-public-ip.sh). Not
+    # optional: without the Secret the new pod does not start, and the old one
+    # keeps serving (rolling update with maxUnavailable 0).
+    env:
+      - name: PUBLIC_IP
+        valueFrom:
+          secretKeyRef:
+            name: traefik-public-ip
+            key: public-ip
+
+    # Port 80 only redirects to HTTPS (308), as on OKE. Certificates use
+    # DNS-01 (ADR 0005), so nothing else needs port 80.
+    ports:
+      web:
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true
+
+    # Edge metrics for Prometheus (demo #92). The metrics entrypoint (:9100)
+    # is on the pod and this ClusterIP Service only, never on the public
+    # Service. The ServiceMonitor is a manifest of its own (servicemonitor.yaml),
+    # not the chart's: with the chart's, this Helm release would fail whenever
+    # the monitoring CRDs are missing, and the edge must not depend on
+    # monitoring.
+    metrics:
+      prometheus:
+        service:
+          enabled: true
+
+    # Admin UIs stay off the public internet (ADR 0014). k3s turns the
+    # dashboard on by default.
+    api:
+      dashboard: false
+
+    # Same as on OKE, where it held under the rate-limit load tests. The chart
+    # derives GOMEMLIMIT from the memory limit.
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 128Mi }

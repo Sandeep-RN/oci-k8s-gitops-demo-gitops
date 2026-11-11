@@ -1,0 +1,33 @@
+# NOT applied to the cluster and not part of the kustomization. CI only.
+#
+# k3s's own values for its bundled Traefik chart: the valuesContent of the
+# HelmChart "traefik" in kube-system, copied from the live node on 2026-11-11
+# (k3s v1.36.5+k3s1, chart traefik-40.1.5+up40.1.0). k3s merges the
+# HelmChartConfig in this folder over these, so CI renders the chart with
+# both, in the same order.
+#
+# After a k3s upgrade, refresh this file and the chart pinned in
+# .github/workflows/validate.yml together:
+#   kubectl -n kube-system get helmchart traefik -o jsonpath='{.spec.valuesContent}'
+#   kubectl -n kube-system get helmchart traefik -o jsonpath='{.spec.chart}'
+deployment:
+  podAnnotations:
+    prometheus.io/port: "8082"
+    prometheus.io/scrape: "true"
+providers:
+  kubernetesIngress:
+    publishedService:
+      enabled: true
+priorityClassName: "system-cluster-critical"
+image:
+  repository: "rancher/mirrored-library-traefik"
+  tag: "3.7.13"
+tolerations:
+- key: "CriticalAddonsOnly"
+  operator: "Exists"
+- key: "node-role.kubernetes.io/control-plane"
+  operator: "Exists"
+  effect: "NoSchedule"
+service:
+  spec:
+    ipFamilyPolicy: "PreferDualStack"

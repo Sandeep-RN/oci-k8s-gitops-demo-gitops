@@ -59,8 +59,9 @@ jobs:
                    -skip CustomResourceDefinition)
           kc() { ./kubeconform "${kc_args[@]}" "$@"; }
           dirs=(apps/*/overlays/*/ argocd/install/ platform/*/)
-          # monitoring/ also holds Helm values folders, which are not kustomizations.
-          for k in monitoring/*/kustomization.yaml; do dirs+=("$(dirname "$k")/"); done
+          # monitoring/ and edge/ also hold Helm values folders, which are not
+          # kustomizations.
+          for k in monitoring/*/kustomization.yaml edge/*/kustomization.yaml; do dirs+=("$(dirname "$k")/"); done
           [ ${#dirs[@]} -gt 1 ] || { echo "no overlays found"; exit 1; }
           for dir in "${dirs[@]}"; do
             echo "::group::${dir}"
@@ -139,6 +140,99 @@ jobs:
           # would silently show "No data".
           dash=apps/link-shortener/base/dashboards/slo-redirect.json
           yq '.panels[].targets[]?.expr' "$dash" | grep -q 'traefik_entrypoint_requests_total' || fail "${dash}: no panel queries traefik_entrypoint_requests_total"
+
+      # ADR 0022: on k3s, Traefik is the chart k3s ships, configured by the
+      # HelmChartConfig in edge/traefik-k3s. Its values are a string, so no
+      # schema checks them, and ArgoCD reports Synced even when k3s's Helm job
+      # rejects them. Render the bundled chart with k3s's default values plus
+      # ours, in k3s's merge order, and assert the edge settings on the result.
+      - name: Assert k3s Traefik settings (ADR 0022)
+        env:
+          # The chart bundled with the k3s version the node runs (demo repo,
+          # terraform/k3s `k3s_version`), taken from k3s-io/k3s-charts at a
+          # fixed commit. After a k3s upgrade, update these three values and
+          # edge/traefik-k3s/k3s-default-values.yaml together.
+          K3S_CHARTS_COMMIT: 2592cc05154ada6333f877d0cc279c25d0c1488b
+          K3S_TRAEFIK_CHART: traefik-40.1.5+up40.1.0
+          # sha256 of assets/traefik/<chart>.tgz at that commit
+          K3S_TRAEFIK_CHART_SHA256: d4d0e818284d310372d38adfce9a1cfb3179a69fc9f3ca8bfadb33581000b778
+        run: |
+          set -euo pipefail
+          fail() { echo "FAIL: $*"; exit 1; }
+          dir=edge/traefik-k3s
+          curl -fsSL -o k3s-traefik.tgz "https://raw.githubusercontent.com/k3s-io/k3s-charts/${K3S_CHARTS_COMMIT}/assets/traefik/${K3S_TRAEFIK_CHART/+/%2B}.tgz"
+          echo "${K3S_TRAEFIK_CHART_SHA256}  k3s-traefik.tgz" | sha256sum -c -
+
+          objs=$(kubectl kustomize "$dir")
+          # k3s reads only the HelmChartConfig kube-system/traefik. Any other
+          # name or namespace is ignored without an error.
+          hcc='select(.kind == "HelmChartConfig")'
+          [ "$(yq "${hcc} | .metadata.namespace + \"/\" + .metadata.name" <<<"$objs")" = "kube-system/traefik" ] || fail "${dir}: the HelmChartConfig must be kube-system/traefik"
+          yq "${hcc} | .spec.valuesContent" <<<"$objs" > k3s-traefik-values.yaml
+          [ -s k3s-traefik-values.yaml ] || fail "${dir}: empty valuesContent"
+
+          # Not named *-traefik.yaml: that pattern is the OKE chart (ADR 0020 step).
+          mkdir -p rendered
+          f=rendered/k3s-traefik-config.yaml
+          ./helm template traefik k3s-traefik.tgz --namespace kube-system \
+            -f "${dir}/k3s-default-values.yaml" -f k3s-traefik-values.yaml \
+            | tee "$f" | ./kubeconform -strict -summary -kubernetes-version "${K8S_VERSION}" -
+
+          svc='select(.kind == "Service" and .metadata.name == "traefik")'
+          dep='select(.kind == "Deployment" and .metadata.name == "traefik")'
+          ctr="${dep} | .spec.template.spec.containers[0]"
+          args=$(yq "${ctr} | .args[]" "$f")
+
+          # Edge: ServiceLB publishes a LoadBalancer Service on the node. Local
+          # keeps client IPs for the per-IP rate limit.
+          [ "$(yq "${svc} | .spec.type" "$f")" = "LoadBalancer" ] || fail "Service is not a LoadBalancer"
+          [ "$(yq "${svc} | .spec.externalTrafficPolicy" "$f")" = "Local" ] || fail "externalTrafficPolicy is not Local"
+
+          # Public address: Traefik writes the sealed public IP into the Ingress
+          # status. publishedService would publish the node's private IP.
+          grep -qFx -- '--providers.kubernetesingress.ingressendpoint.ip=$(PUBLIC_IP)' <<<"$args" || fail "ingressendpoint.ip is not \$(PUBLIC_IP)"
+          if grep -q -- 'ingressendpoint.publishedservice' <<<"$args"; then fail "publishedService must be off"; fi
+          ref=$(yq "${ctr} | .env[] | select(.name == \"PUBLIC_IP\") | .valueFrom.secretKeyRef | .name + \"/\" + .key + \"/\" + ((.optional // false) | tostring)" "$f")
+          [ "$ref" = "traefik-public-ip/public-ip/false" ] || fail "PUBLIC_IP must come from Secret traefik-public-ip, key public-ip, not optional (got '${ref}')"
+          # With a missing Secret the new pod cannot start; the old one must
+          # keep serving meanwhile.
+          [ "$(yq "${dep} | .spec.strategy.rollingUpdate.maxUnavailable" "$f")" = "0" ] || fail "rolling update maxUnavailable is not 0"
+          # The Secret itself: shipped next to the config, strict scope.
+          sealed=$(yq 'select(.kind == "SealedSecret" and .metadata.name == "traefik-public-ip")' <<<"$objs")
+          [ -n "$sealed" ] || fail "${dir}: no traefik-public-ip SealedSecret"
+          [ "$(yq '.metadata.namespace' <<<"$sealed")" = "kube-system" ] || fail "${dir}: traefik-public-ip is not in kube-system"
+          [ "$(yq '.spec.encryptedData | keys | join(",")' <<<"$sealed")" = "public-ip" ] || fail "${dir}: traefik-public-ip must hold exactly the key public-ip"
+          if grep -qE 'sealedsecrets\.bitnami\.com/(cluster|namespace)-wide: "?true' <<<"$sealed"; then
+            fail "${dir}: traefik-public-ip must be sealed with --scope strict"
+          fi
+
+          # As on OKE: port 80 only redirects, no dashboard.
+          grep -qx -- '--entryPoints.web.http.redirections.entryPoint.to=:443' <<<"$args" || fail "HTTP is not redirected to 443"
+          grep -qx -- '--entryPoints.web.http.redirections.entryPoint.permanent=true' <<<"$args" || fail "redirect is not permanent"
+          grep -qx -- '--providers.kubernetesingress' <<<"$args" || fail "Ingress provider is off"
+          grep -qx -- '--providers.kubernetescrd' <<<"$args" || fail "CRD provider is off (Middlewares need it)"
+          grep -qx -- '--api.dashboard=false' <<<"$args" || fail "dashboard is enabled"
+
+          # Edge metrics: a ClusterIP Service, never on the public one. The
+          # ServiceMonitor is ours, not the chart's, so the Helm release does
+          # not need the monitoring CRDs.
+          grep -qx -- '--metrics.prometheus=true' <<<"$args" || fail "Prometheus metrics are off"
+          msvc='select(.kind == "Service" and .metadata.name == "traefik-metrics")'
+          [ "$(yq "${msvc} | .spec.type" "$f")" = "ClusterIP" ] || fail "traefik-metrics Service is missing or not ClusterIP"
+          if yq "${svc} | .spec.ports[].port" "$f" | grep -qx 9100; then fail "metrics port 9100 is on the public Service"; fi
+          [ -z "$(yq 'select(.kind == "ServiceMonitor") | .metadata.name' "$f")" ] || fail "the chart must not render a ServiceMonitor"
+          sm='select(.kind == "ServiceMonitor" and .metadata.name == "traefik")'
+          [ "$(yq "${sm} | .metadata.namespace" <<<"$objs")" = "kube-system" ] || fail "${dir}: no ServiceMonitor traefik in kube-system"
+          # Every selector label must be on the rendered metrics Service, or
+          # Prometheus finds no target and the panel silently shows nothing.
+          labels=$(yq "${sm} | .spec.selector.matchLabels | to_entries | .[] | .key + \"=\" + .value" <<<"$objs")
+          [ -n "$labels" ] || fail "${dir}: ServiceMonitor has no selector labels"
+          while IFS='=' read -r key want; do
+            [ "$(yq "${msvc} | .metadata.labels[\"${key}\"]" "$f")" = "$want" ] || fail "${dir}: ServiceMonitor label ${key}=${want} is not on the traefik-metrics Service"
+          done <<<"$labels"
+          port=$(yq "${sm} | .spec.endpoints[0].targetPort" <<<"$objs")
+          [ -n "$(yq "${ctr} | .ports[] | select(.name == \"${port}\") | .containerPort" "$f")" ] || fail "${dir}: ServiceMonitor targetPort '${port}' is not a named port of the Traefik container"
+          echo "ok"
 
       - name: Test alerting rules (promtool)
         run: |
@@ -265,6 +359,7 @@ jobs:
             # Never change these for a running cluster (see above).
             case "$cluster" in
               oke) owner=oci-demo-oke ;;
+              k3s) owner=oci-demo-k3s ;;
               *) fail "${f}: no pinned TXT owner id for cluster ${cluster}" ;;
             esac
             container='select(.kind == "Deployment" and .metadata.name == "external-dns") | .spec.template.spec.containers[] | select(.name == "external-dns")'
@@ -281,8 +376,9 @@ jobs:
             has --registry=txt
             has "--txt-owner-id=${owner}"
             has --txt-prefix=edns-
-            # The NLB's private IP is in the Ingress status too; it must never
-            # reach public DNS.
+            # The NLB's private IP is in the Ingress status too (OKE); it must
+            # never reach public DNS. On k3s it is a guard against a wrongly
+            # sealed node address (ADR 0022).
             has --exclude-target-net=10.0.0.0/8
             has --exclude-target-net=172.16.0.0/12
             has --exclude-target-net=192.168.0.0/16
