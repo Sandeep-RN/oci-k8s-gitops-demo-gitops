@@ -1,0 +1,52 @@
+# k3s overrides on top of values.yaml: one A1 node, 2 OCPU / 12 GB, 50 GB boot
+# disk (ADR 0001, 0022). The counterpart of values-oke.yaml. Retention (8d),
+# resource requests/limits and Alertmanager routing come from values.yaml
+# unchanged; the memory budget that shows they fit is in the PR that added this
+# file (demo #116).
+
+# k3s runs the API server, scheduler, controller manager and kube-proxy inside
+# one k3s process, not as pods, and binds the scheduler's, controller
+# manager's and kube-proxy's metrics ports to 127.0.0.1, out of Prometheus's
+# reach. There is no etcd: a single server without --cluster-init stores state
+# in SQLite (kine). The chart's Services for these would find no endpoints and
+# its "<component>Down" alerts (absent(up{job=...} == 1)) would fire forever.
+# The API server (kps-apiserver) and the kubelet (kps-kubelet, with cAdvisor)
+# stay scraped, and so does CoreDNS.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # Attached to every alert sent to Alertmanager (and to anything federated
+    # or remote-written later), so a Discord message says which cluster paged.
+    # Series stored in this Prometheus do not carry it; queries and dashboards
+    # are unchanged.
+    externalLabels:
+      cluster: k3s
+    # The real disk cap. local-path is a host directory on the node's 50 GB
+    # boot volume, shared with the OS, container images and Postgres; it does
+    # not enforce the PVC size. Prometheus deletes the oldest blocks once its
+    # storage passes this size, whichever of time (8d) or size comes first.
+    # The WAL and head chunks count toward it but only blocks are deleted, and
+    # a compaction briefly holds old and new blocks together, so Prometheus's
+    # storage docs advise at most 80-85% of the disk: 8GB is ~75% of 10Gi.
+    retentionSize: 8GB
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          # k3s's bundled provisioner (no cloud volume, nothing to delete at
+          # teardown, no extra cost). Named explicitly rather than relying on
+          # the default class.
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              # Not enforced by local-path; kept equal to retentionSize plus
+              # margin so the request documents the intended footprint.
+              storage: 10Gi

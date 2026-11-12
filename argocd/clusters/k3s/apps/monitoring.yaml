@@ -1,0 +1,52 @@
+# Prometheus, Alertmanager and Grafana (kube-prometheus-stack, ADR 0008), sized
+# for the single 2 OCPU / 12 GB node (ADR 0001, 0022). Three sources: the pinned
+# upstream chart, this repo as the source of the values files ($values), and
+# this repo's monitoring/k3s for objects the chart does not create (the Grafana
+# admin and Discord webhook SealedSecrets).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  annotations:
+    # Before workload apps: their ServiceMonitors need the CRDs this installs
+    # (edge/traefik-k3s and the link-shortener retry until they exist).
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  # "default", not "demo": the chart installs CRDs and ClusterRoles.
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      # Pinned, the same version as OKE; CI renders this exact version with the
+      # values below.
+      targetRevision: 92.3.0
+      helm:
+        releaseName: kps
+        valueFiles:
+          - $values/monitoring/kube-prometheus-stack/values.yaml
+          - $values/monitoring/kube-prometheus-stack/values-k3s.yaml
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      path: monitoring/k3s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The operator's CRDs exceed the client-side apply annotation size limit.
+      - ServerSideApply=true
+      # Differs from OKE: on a fresh k3s bootstrap this app and sealed-secrets
+      # share wave -1, so the SealedSecret CRD may not exist on the first sync.
+      # Skip that dry run and retry instead of failing the whole sync.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

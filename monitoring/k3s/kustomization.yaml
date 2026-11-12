@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Cluster-specific monitoring objects that are not part of the Helm chart.
+# Deployed as the third source of argocd/clusters/k3s/apps/monitoring.yaml.
+#
+# Both SealedSecrets are byte-for-byte copies of monitoring/oke: k3s runs on
+# the OKE sealing keys restored from the offline backup (ADR 0022), and the
+# names and namespaces are unchanged, so the strict-scope ciphertext decrypts
+# here without resealing. If either secret is rotated, reseal it once and copy
+# the result to both folders while both clusters exist.
+namespace: monitoring
+resources:
+  - grafana-admin-sealedsecret.yaml
+  # Discord webhook URL for Alertmanager (the same channel as OKE; alerts carry
+  # the cluster external label, so the message shows which cluster paged).
+  - alertmanager-discord-sealedsecret.yaml
