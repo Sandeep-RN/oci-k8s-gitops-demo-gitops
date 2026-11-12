@@ -1,0 +1,23 @@
+# HTTP Strict Transport Security for demo.sandeeprn.in (ADR 0020, demo #90).
+#
+# The one hard-to-reverse setting: a browser that has seen this header uses
+# HTTPS only for this host until max-age runs out, whatever the server does
+# later. So it covers this host only (no includeSubDomains: the blog and any
+# other sandeeprn.in name stay unaffected) and never asks for the browsers'
+# preload list, which takes months to leave. It was enabled only after the
+# production certificate was proven trusted.
+#
+# Traefik sends it on HTTPS responses only; plain HTTP is redirected at the
+# entrypoint before any middleware runs.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: hsts
+  namespace: link-shortener
+spec:
+  headers:
+    # 180 days ("6 months" in ADR 0020). CI and the demo repo's
+    # scripts/verify-public-url.sh (HSTS_MAX_AGE) check this exact number.
+    stsSeconds: 15552000
+    stsIncludeSubdomains: false
+    stsPreload: false

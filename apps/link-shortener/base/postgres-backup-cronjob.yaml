@@ -6,6 +6,8 @@
 #      only creating and listing objects there (no read, overwrite or delete).
 # The Object Storage namespace identifies the tenancy, so it is looked up at
 # run time instead of being committed. Old dumps expire by a lifecycle rule.
+# Objects are named link-shortener/<cluster>/<UTC timestamp>.pgc; each overlay
+# sets the cluster (env BACKUP_CLUSTER) so clusters sharing the bucket stay apart.
 # Alert if no backup succeeds for 26 h: slo-rules.yaml (PostgresBackupMissing).
 apiVersion: batch/v1
 kind: CronJob
@@ -89,8 +91,14 @@ spec:
               command: ["sh", "-ec"]
               args:
                 - |
+                  # BACKUP_CLUSTER comes from each overlay. Refuse to run without
+                  # it (or with odd characters) rather than upload under a name
+                  # that mixes clusters; PostgresBackupMissing then reports it.
+                  case "${BACKUP_CLUSTER:-}" in
+                    ''|*[!a-z0-9-]*) echo "BACKUP_CLUSTER must be set by the overlay: lowercase letters, digits, dashes (got '${BACKUP_CLUSTER:-}')" >&2; exit 1 ;;
+                  esac
                   ns=$(oci os ns get --query data --raw-output)
-                  name="link-shortener/$(date -u +%Y-%m-%dT%H%M%SZ).pgc"
+                  name="link-shortener/${BACKUP_CLUSTER}/$(date -u +%Y-%m-%dT%H%M%SZ).pgc"
                   # --no-overwrite: the policy forbids overwriting anyway; fail clearly if the name exists.
                   oci os object put --namespace-name "$ns" --bucket-name "$BUCKET" \
                     --name "$name" --file /work/dump.pgc --no-overwrite --no-multipart

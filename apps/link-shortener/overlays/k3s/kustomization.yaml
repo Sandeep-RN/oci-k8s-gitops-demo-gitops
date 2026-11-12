@@ -1,10 +1,71 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Single-node k3s on Always Free. Differences from base (Ingress, storage,
-# Postgres) are added here as those pieces arrive.
-# Before the first sync, add this cluster's SealedSecrets (sealed with the k3s
-# controller's key): postgres-credentials, postgres-app-credentials and
-# link-tokens. The backend's link-tokens volume is required, so without it new
-# backend pods wait in ContainerCreating.
+# Single-node k3s on Always Free (ADR 0001, 0022).
 resources:
   - ../../base
+  # The OKE sealing keys are reused on k3s (ADR 0022), so these are the same
+  # files as in overlays/oke, unchanged: same names and namespace, strict scope.
+  # Do not reseal them for k3s. Restore the keys BEFORE ArgoCD syncs this app
+  # (docs/runbooks/k3s-bootstrap.md, step 2), or none of them decrypts.
+  - postgres-credentials-sealedsecret.yaml
+  # The backend's own role (ADR 0018); username linkshortener_app.
+  - postgres-app-credentials-sealedsecret.yaml
+  # Named link-creation tokens (ADR 0020), mounted into the backend. The volume
+  # is required: without this Secret new backend pods wait in ContainerCreating.
+  # Add, rotate: scripts/seal-link-tokens.sh NAME... (see its header to revoke).
+  - link-tokens-sealedsecret.yaml
+  # https://demo.sandeeprn.in via k3s's Traefik, behind the rate limit, with HSTS.
+  - ingress.yaml
+  - rate-limit-middleware.yaml
+  - hsts-middleware.yaml
+# The backend Service stays ClusterIP from the base: the Ingress is the only
+# way in. A LoadBalancer Service would create a second public address through
+# ServiceLB that skips TLS, HSTS and the rate limit; CI rejects it.
+patches:
+  # Which cluster wrote a backup (object name link-shortener/<cluster>/<ts>.pgc),
+  # so two clusters sharing one bucket cannot be confused or overwrite each
+  # other. Keep it to lowercase letters, digits and dashes (the CronJob checks).
+  - target:
+      kind: CronJob
+      name: postgres-backup
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/env/-
+        value:
+          name: BACKUP_CLUSTER
+          value: k3s
+  # The landing page's example link (demo #103). Same code as overlays/oke: the
+  # link is a row in the database, and the OKE backup restored at bootstrap
+  # (k3s-bootstrap.md, step 6) brings that row with it. Public, not a secret.
+  # Without the restore the page still works, with a link that answers 404.
+  # Set on the Deployment, not in app-config, so a change restarts the pods.
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: EXAMPLE_LINK_CODE
+          value: seYOHlz
+  # k3s's default StorageClass, named explicitly so a changed default cannot
+  # move the volume. local-path is a directory on the node's boot disk
+  # (/var/lib/rancher/k3s/storage): the 50 GB boot volume is shared with the OS,
+  # container images, k3s itself and the monitoring stack's Prometheus volume
+  # (10Gi, W6). local-path does NOT enforce the size: 5Gi is only the request
+  # the scheduler records, so a runaway database can fill the whole disk.
+  # Mitigation: the nightly dump; watch node disk usage (whether an alert covers
+  # it depends on W6's monitoring values, not checked here). The volume is tied
+  # to this node; there is no failover (ADR 0001).
+  # volumeClaimTemplates are immutable: get this right before the first sync.
+  # Spread stays ScheduleAnyway from the base: one node, both pods must schedule.
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: add
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: local-path
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 5Gi

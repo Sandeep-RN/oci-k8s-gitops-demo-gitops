@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: link-shortener
+  namespace: argocd
+  # Deleting this Application also deletes what it deployed.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: demo
+  source:
+    repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+    targetRevision: main
+    path: apps/link-shortener/overlays/k3s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: link-shortener
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # The ServiceMonitor needs the monitoring CRDs. On a fresh cluster this app
+    # can sync before they exist; retrying lets it succeed once they do.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

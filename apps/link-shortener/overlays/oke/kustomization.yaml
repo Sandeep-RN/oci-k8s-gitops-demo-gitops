@@ -19,6 +19,19 @@ resources:
 # only way in (ADR 0020). Making it a LoadBalancer again would create a second
 # public address that skips TLS, HSTS and the rate limit; CI rejects it.
 patches:
+  # Which cluster wrote a backup (object name link-shortener/<cluster>/<ts>.pgc),
+  # so two clusters sharing one bucket cannot be confused or overwrite each
+  # other (ADR 0022). Objects written before this change have no cluster part
+  # (link-shortener/<ts>.pgc) and stay restorable under their old names.
+  - target:
+      kind: CronJob
+      name: postgres-backup
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/env/-
+        value:
+          name: BACKUP_CLUSTER
+          value: oke
   # The landing page's example link (demo #103). A short link is a row in this
   # cluster's database, so its code is per-cluster config. It is set on the
   # Deployment, not in app-config: the app reads it once at start, and a

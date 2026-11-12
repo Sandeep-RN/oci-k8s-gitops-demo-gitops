@@ -1,0 +1,39 @@
+# Rate limit for the public host (ADR 0020, ADR 0022).
+#
+# Per client on k3s. Traefik's Service uses externalTrafficPolicy Local (ADR 0022,
+# edge/traefik-k3s), so the pod sees each visitor's real address and the default
+# source criterion (the remote address) gives every client its own bucket. On
+# OKE this was impossible (NLB and Cluster policy hid every client), which is why
+# overlays/oke runs a low shared "flood guard" of 5/s burst 10 instead (demo #106).
+#
+# Values are the original per-client design from ADR 0020 / demo #88 (20/s, burst
+# 40), not OKE's lowered ones:
+#   - one page load is about 5-10 requests, so burst 40 never touches a human;
+#   - visitors behind a company or mobile-carrier NAT share one IP, and a 429 for
+#     a recruiter costs more than a scripted client getting 20 redirects a second;
+#   - a burst test from one machine (scripts/verify-public-url.sh sends 600
+#     requests at ~100/s) still gets 429s.
+# This limits one noisy client, not a distributed flood: total traffic is not
+# capped, only each source address.
+#
+# If the ADR 0022 fallback is ever taken (node-external-ip + Cluster), every
+# client is again one address (10.42.0.1) and this becomes a site-wide 20/s.
+# That is still well above demo traffic, but it is no longer per client; check
+# `kubectl -n kube-system get svc traefik -o jsonpath='{.spec.externalTrafficPolicy}'`.
+#
+# Not proven live yet (needs the node serving traffic; demo #115): the burst
+# check must return some 429s, and a second client must still get 200 meanwhile.
+# Buckets are in memory in the single Traefik pod; a second replica would double
+# the effective limit. IPv6 clients can rotate within their /64.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: link-shortener
+spec:
+  rateLimit:
+    # Requests per second per client, sustained.
+    average: 20
+    period: 1s
+    # Short spikes allowed above the average (a page load, a retry).
+    burst: 40
