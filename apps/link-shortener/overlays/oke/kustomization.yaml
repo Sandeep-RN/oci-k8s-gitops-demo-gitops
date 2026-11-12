@@ -11,13 +11,17 @@ resources:
   # Named link-creation tokens (ADR 0020), mounted into the backend.
   # Add, rotate: scripts/seal-link-tokens.sh NAME... (see its header to revoke).
   - link-tokens-sealedsecret.yaml
-  # https://demo.sandeeprn.in via Traefik, behind the rate limit, with HSTS (ADR 0020).
-  - ingress.yaml
+  # No Ingress: https://demo.sandeeprn.in moved to k3s (ADR 0022, demo #8).
+  # Removing the Ingress made ArgoCD prune it, and OKE's external-dns
+  # (--policy=sync) then deleted the A record and its TXT owner record, so
+  # k3s's external-dns could create its own. Never add it back here: both
+  # clusters would claim the same hostname. The middlewares stay only so this
+  # overlay still passes CI until the whole OKE target goes (#13).
   - rate-limit-middleware.yaml
   - hsts-middleware.yaml
-# The backend Service stays ClusterIP from the base: the Ingress above is the
-# only way in (ADR 0020). Making it a LoadBalancer again would create a second
-# public address that skips TLS, HSTS and the rate limit; CI rejects it.
+# The backend Service stays ClusterIP from the base: with no Ingress, this
+# cluster has no public way in (ADR 0020). Making it a LoadBalancer would
+# create a public address that skips TLS, HSTS and the rate limit; CI rejects it.
 patches:
   # Which cluster wrote a backup (object name link-shortener/<cluster>/<ts>.pgc),
   # so two clusters sharing one bucket cannot be confused or overwrite each
