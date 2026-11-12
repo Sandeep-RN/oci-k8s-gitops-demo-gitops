@@ -1,0 +1,30 @@
+# Scrapes Traefik's metrics entrypoint through the ClusterIP Service
+# traefik-metrics that the chart creates (helmchartconfig.yaml). Same shape as
+# the ServiceMonitor the chart itself would render; kept outside the chart so
+# Traefik's Helm release never depends on the monitoring CRDs.
+#
+# The labels below are the chart's, with k3s's release name
+# (traefik-kube-system). CI checks they match the rendered Service.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: traefik
+  namespace: kube-system
+  annotations:
+    # Last: needs the ServiceMonitor CRD (monitoring app). If that is missing,
+    # only this wave fails; the edge config before it is already applied.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  jobLabel: traefik
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+      app.kubernetes.io/instance: traefik-kube-system
+      app.kubernetes.io/component: metrics
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  endpoints:
+    - targetPort: metrics
+      path: /metrics
+      interval: 30s

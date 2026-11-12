@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Configuration for k3s's built-in Traefik (ADR 0022), deployed by
+# argocd/clusters/k3s/apps/traefik-config.yaml. Order is set by sync waves in
+# the files: sealed public IP, then the HelmChartConfig, then the ServiceMonitor.
+#
+# No namespace field: every object names kube-system itself. The SealedSecret
+# is strict-scoped to that namespace, and k3s only reads a HelmChartConfig
+# there.
+#
+# public-ip-sealedsecret.yaml is written by scripts/seal-traefik-public-ip.sh.
+# k3s-default-values.yaml is a CI fixture and deliberately not listed.
+resources:
+  - public-ip-sealedsecret.yaml
+  - helmchartconfig.yaml
+  - servicemonitor.yaml

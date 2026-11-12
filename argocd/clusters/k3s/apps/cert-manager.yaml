@@ -1,0 +1,36 @@
+# cert-manager controller, webhook, cainjector and CRDs (ADR 0005, 0020).
+# Two sources: the pinned upstream chart, and this repo for the values file.
+# The ClusterIssuers live in cert-manager-issuers.yaml, which needs these CRDs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  # "default", not "demo": it creates CRDs and ClusterRoles.
+  project: default
+  sources:
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      # Pinned; CI renders this exact version with the values below.
+      targetRevision: v1.21.3
+      helm:
+        releaseName: cert-manager
+        valueFiles:
+          - $values/edge/cert-manager/values.yaml
+    - repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # cert-manager's CRDs exceed the client-side apply annotation size limit.
+      - ServerSideApply=true

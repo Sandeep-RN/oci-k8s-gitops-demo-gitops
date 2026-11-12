@@ -1,0 +1,11 @@
+# k3s-only external-dns values, layered on values.yaml (ADR 0020, 0022).
+
+# This cluster's identity in the TXT owner records, different from OKE's so
+# neither cluster ever updates or deletes the other's records. NEVER change it
+# while the cluster runs (see values.yaml); CI pins it.
+txtOwnerId: oci-demo-k3s
+
+# The private-range exclusion in values.yaml stays on as a guard: Traefik on
+# k3s publishes one address, the node's public IP from a SealedSecret
+# (edge/traefik-k3s). If that value were ever sealed as the node's private IP,
+# external-dns would publish nothing instead of a dead record.

@@ -1,0 +1,23 @@
+# ArgoCD manages its own installation from argocd/install.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+    targetRevision: main
+    path: argocd/install
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      # prune off: a bad commit must never make ArgoCD delete its own pieces.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      # ArgoCD's CRDs exceed the client-side apply annotation size limit.
+      - ServerSideApply=true

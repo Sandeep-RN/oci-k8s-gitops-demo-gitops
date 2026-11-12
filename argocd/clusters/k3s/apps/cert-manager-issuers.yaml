@@ -1,0 +1,31 @@
+# Let's Encrypt ClusterIssuers (staging and production) using Cloudflare DNS-01,
+# plus the SealedSecret holding the Cloudflare token (ADR 0005, 0020).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-issuers
+  namespace: argocd
+  annotations:
+    # After the cert-manager app (wave -1): ClusterIssuer needs its CRDs.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  # "default", not "demo": ClusterIssuer is cluster-scoped.
+  project: default
+  source:
+    repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+    targetRevision: main
+    path: platform/cert-manager-issuers
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # If the CRDs are not registered yet on the first sync, retry instead of
+      # failing the dry run.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }
