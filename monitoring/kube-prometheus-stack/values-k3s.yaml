@@ -12,6 +12,13 @@
 # its "<component>Down" alerts (absent(up{job=...} == 1)) would fire forever.
 # The API server (kps-apiserver) and the kubelet (kps-kubelet, with cAdvisor)
 # stay scraped, and so does CoreDNS.
+#
+# Nothing is lost by this: the k3s process has ONE metrics registry, and both
+# the API server's and the kubelet's /metrics serve all of it (measured
+# 2026-11-12 on k3s v1.36.5+k3s1: the same ~36.5k series on both, including
+# scheduler_*, workqueue_* of the controllers, kubeproxy_* and kine_*). The
+# scheduler, controller manager and kube-proxy metrics are therefore in
+# Prometheus under job="apiserver".
 kubeControllerManager:
   enabled: false
 kubeScheduler:
@@ -20,6 +27,23 @@ kubeProxy:
   enabled: false
 kubeEtcd:
   enabled: false
+
+kubelet:
+  serviceMonitor:
+    # Because of that shared registry, the kubelet's /metrics would ingest all
+    # ~36.5k series a second time under job="kubelet": double the memory, and
+    # double counts in any query without a job filter. Keep only the families
+    # the chart's kubelet rules and dashboards read (~1.2k series). cAdvisor
+    # (/metrics/cadvisor) and /metrics/probes are separate handlers, unaffected.
+    # This list replaces the chart's default, so its one rule is repeated last.
+    metricRelabelings:
+      - action: keep
+        sourceLabels: [__name__]
+        regex: (kubelet_.*|volume_manager_.*|storage_operation_.*|csi_operations_.*|rest_client_requests_total|rest_client_request_duration_seconds_.*|process_.*|go_goroutines)
+      # Chart default: reduce bucket cardinality of kubelet storage operations.
+      - action: drop
+        sourceLabels: [__name__, le]
+        regex: (csi_operations|storage_operation_duration)_seconds_bucket;(0.25|2.5|15|25|120|600)(\.0)?
 
 prometheus:
   prometheusSpec:
