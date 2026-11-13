@@ -3,8 +3,9 @@ kind: PodDisruptionBudget
 metadata:
   name: backend
 spec:
-  # On the single k3s node this cannot be honoured during a drain (ADR 0001);
-  # it is kept to show intent and is proven on the multi-node OKE target.
+  # It is honoured on every cluster. On the single k3s node (ADR 0001) a drain
+  # blocks on it, because no other node can take the pod; it was proven on the
+  # multi-node OKE target.
   minAvailable: 1
   selector:
     matchLabels:

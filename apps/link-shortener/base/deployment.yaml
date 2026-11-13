@@ -91,9 +91,10 @@ spec:
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { memory: 128Mi } # no CPU limit: avoids throttling on a small node
-          # Probe timeouts are explicit (the default is 1 s). During a database
-          # outage /readyz answers 503 in up to ~1.5 s, and the kubelet must wait
-          # long enough to read that 503 rather than record a timeout.
+          # Probe timeouts are explicit (the default is 1 s), so a slow answer is
+          # read by the kubelet rather than recorded as a timeout. /readyz checks
+          # pod-local state only (ADR 0016): a database outage does not make
+          # pods unready; the redirect route answers 503 for it instead.
           startupProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 2

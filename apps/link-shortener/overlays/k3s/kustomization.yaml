@@ -52,11 +52,11 @@ patches:
   # move the volume. local-path is a directory on the node's boot disk
   # (/var/lib/rancher/k3s/storage): the 50 GB boot volume is shared with the OS,
   # container images, k3s itself and the monitoring stack's Prometheus volume
-  # (10Gi, W6). local-path does NOT enforce the size: 5Gi is only the request
-  # the scheduler records, so a runaway database can fill the whole disk.
-  # Mitigation: the nightly dump; watch node disk usage (whether an alert covers
-  # it depends on W6's monitoring values, not checked here). The volume is tied
-  # to this node; there is no failover (ADR 0001).
+  # (10Gi, demo #116). local-path does NOT enforce the size: 5Gi is only the
+  # request the scheduler records, so a runaway database can fill the whole
+  # disk. Mitigation: the nightly dump; watch node disk usage (a disk-full
+  # alert for the local-path volume has not been checked live, demo #116). The
+  # volume is tied to this node; there is no failover (ADR 0001).
   # volumeClaimTemplates are immutable: get this right before the first sync.
   # Spread stays ScheduleAnyway from the base: one node, both pods must schedule.
   - target:

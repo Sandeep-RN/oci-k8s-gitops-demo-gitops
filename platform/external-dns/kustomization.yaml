@@ -4,9 +4,7 @@ kind: Kustomization
 # Application's destination is the same namespace.
 #
 # cloudflare-api-token-sealedsecret.yaml is added to this list by
-# `scripts/seal-cloudflare-token.sh external-dns`, run by the owner. Until then
-# this kustomization is empty and does not build, so neither CI nor ArgoCD can
-# render the external-dns Application (chart included). Seal before merging.
+# `scripts/seal-cloudflare-token.sh external-dns`, run by the owner.
 # Keep `resources` the last key.
 resources:
   - cloudflare-api-token-sealedsecret.yaml

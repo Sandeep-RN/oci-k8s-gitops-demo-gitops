@@ -14,6 +14,10 @@ and the DNS switch: oci-k8s-gitops-demo `docs/runbooks/k3s-bootstrap.md`.
 
 ## What differs from OKE
 
+The OKE target served the site until 2026-11-12. It still exists with no
+public way in; its teardown is issue
+[#13](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/13) (due 2026-11-15).
+
 | | OKE | k3s |
 |---|---|---|
 | Traefik | upstream chart, `apps/traefik.yaml` | the chart k3s ships, configured by `apps/traefik-config.yaml` (`edge/traefik-k3s`) |
@@ -39,7 +43,8 @@ kubectl create secret generic NAME -n NAMESPACE --dry-run=client -o json --from-
   | kubeseal --cert argocd/clusters/k3s/sealed-secrets-cert.pem --format yaml --scope strict
 ```
 
-The controller renews its key every 30 days; old SealedSecrets keep working,
-and new ones should use a freshly fetched cert (`kubeseal --fetch-cert`).
-Backup and restore of the private keys: oci-k8s-gitops-demo
+The seal scripts in `scripts/` seal with this folder's committed certificate.
+The controller makes a new key every 30 days; old sealed files keep working.
+After a renewal, refresh this file with `kubeseal --fetch-cert` and take a new
+backup of the private keys. Backup and restore: oci-k8s-gitops-demo
 `docs/runbooks/sealed-secrets.md`.

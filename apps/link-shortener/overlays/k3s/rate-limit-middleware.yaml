@@ -21,8 +21,9 @@
 # That is still well above demo traffic, but it is no longer per client; check
 # `kubectl -n kube-system get svc traefik -o jsonpath='{.spec.externalTrafficPolicy}'`.
 #
-# Not proven live yet (needs the node serving traffic; demo #115): the burst
-# check must return some 429s, and a second client must still get 200 meanwhile.
+# Proven live on 2026-11-12 UTC (demo #115): a burst of 600 requests from one
+# client got 282 x 429. Not run yet: the check that a second client still gets
+# 200 during the burst.
 # Buckets are in memory in the single Traefik pod; a second replica would double
 # the effective limit. IPv6 clients can rotate within their /64.
 apiVersion: traefik.io/v1alpha1

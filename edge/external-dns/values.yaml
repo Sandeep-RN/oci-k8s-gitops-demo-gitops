@@ -15,8 +15,8 @@ env:
         name: cloudflare-api-token
         key: api-token
 
-# Ingress only. Services are excluded on purpose: the Traefik and app
-# LoadBalancer Services must never publish records of their own.
+# Ingress only. Services are excluded on purpose: a LoadBalancer Service (the
+# one for Traefik, or one an app adds) must never publish records of its own.
 sources:
   - ingress
 
@@ -55,7 +55,8 @@ extraArgs:
 interval: 1m
 triggerLoopOnEvent: true
 
-# Sized for 1 OCPU / 8 GB nodes shared with the app, Postgres and monitoring.
+# Sized for small nodes (1 OCPU / 8 GB on OKE, 2 OCPU / 12 GB on k3s) shared with
+# the app, Postgres and monitoring.
 # One replica: a short outage only delays a DNS change.
 resources:
   requests: { cpu: 10m, memory: 32Mi }
