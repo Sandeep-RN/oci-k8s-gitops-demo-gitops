@@ -1,5 +1,9 @@
 # OKE cluster
 
+The OKE target served the site until 2026-11-12. It still exists with no
+public way in; its teardown is issue
+[#13](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/13) (due 2026-11-15).
+
 - `root.yaml`: the app-of-apps root, applied once at bootstrap.
 - `apps/`: what ArgoCD runs on this cluster.
 - `sealed-secrets-cert.pem`: this cluster's Sealed Secrets **public** certificate.

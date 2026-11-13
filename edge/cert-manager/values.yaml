@@ -16,7 +16,8 @@ extraArgs:
   - --dns01-recursive-nameservers-only
   - --dns01-recursive-nameservers=1.1.1.1:53,8.8.8.8:53
 
-# Sized for 1 OCPU / 8 GB nodes shared with the app, Postgres and monitoring.
+# Sized for small nodes (1 OCPU / 8 GB on OKE, 2 OCPU / 12 GB on k3s) shared with
+# the app, Postgres and monitoring.
 # One replica of each: certificates are renewed in the background, so a short
 # controller outage costs nothing, and leader election would only add pods.
 resources:
