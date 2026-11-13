@@ -1,0 +1,37 @@
+# Dependabot version updates (demo #161). Reference:
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+#
+# GitHub Actions only. Dependabot does not read the two things that matter most
+# in this repo: the Helm chart versions in ArgoCD Application manifests
+# (spec.sources[].targetRevision) and the image tags in Kustomize files
+# (images[].newTag; the app repo's CI bumps that one). Renovate could cover both;
+# that is a separate decision.
+#
+# Weekly, Monday morning IST; minor and patch updates in one PR, majors on
+# their own. Dependabot's default 3-day cooldown for new releases applies.
+#
+# Dependabot-triggered runs get a read-only GITHUB_TOKEN and no regular Actions
+# secrets. validate.yml and gitleaks.yml need none (public downloads, checksum
+# checks, contents: read), so the required `validate` check can pass.
+#
+# "Dependabot security updates" is a separate repo setting and is not enabled by
+# this file.
+version: 2
+updates:
+  # Actions are pinned by commit SHA with a version comment on the same line
+  # (`uses: owner/repo@<sha> # v1.2.3`). Dependabot updates both the SHA and
+  # that comment.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "CI"
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
