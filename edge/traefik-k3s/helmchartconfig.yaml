@@ -54,8 +54,10 @@ spec:
             name: traefik-public-ip
             key: public-ip
 
-    # Port 80 only redirects to HTTPS (308), as on OKE. Certificates use
-    # DNS-01 (ADR 0005), so nothing else needs port 80.
+    # Port 80 only redirects to HTTPS (permanent), as on OKE. k3s's Traefik
+    # 3.7.13 answers a GET with 301 and other methods with 308 (measured
+    # 2026-11-12); the verify script accepts both. Certificates use DNS-01
+    # (ADR 0005), so nothing else needs port 80.
     ports:
       web:
         http:
