@@ -2,3 +2,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: link-shortener
+  annotations:
+    # Keep this Namespace if its Application is ever deleted. The Application
+    # has a cascade finalizer, and the root app prunes it when its file here is
+    # removed or renamed. Without this, that deletes the Namespace and the
+    # Postgres volume claim in it (data written since the last nightly backup
+    # is lost). Delete a Namespace on purpose with kubectl, not by accident.
+    argocd.argoproj.io/sync-options: Delete=false
