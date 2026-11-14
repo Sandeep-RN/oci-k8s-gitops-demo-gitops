@@ -105,12 +105,6 @@ password manager); revoke by deleting the key (see the script header). Anything
 that creates links (the demo repo's verify script) reads its token from the
 `LINK_TOKEN` environment variable, never from a repo. A k6 load job is not built.
 
-**Known gap:** `scripts/seal-link-tokens.sh` still writes to `overlays/oke`.
-Until it points at `overlays/k3s` (tracked in issue
-[#13](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/13) of the demo
-repo), using it changes only the OKE copy, so a revoked token would keep working
-on the live site.
-
 **Cloudflare tokens** (ADR 0020): cert-manager and external-dns each have
 their own token (Zone:DNS:Edit and Zone:Zone:Read on `sandeeprn.in` only).
 Seal or rotate with `scripts/seal-cloudflare-token.sh cert-manager` or

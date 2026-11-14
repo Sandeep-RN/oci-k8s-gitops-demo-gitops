@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Seal named link-creation tokens into the OKE overlay (demo #87, ADR 0020).
+# Seal named link-creation tokens into the k3s overlay (demo #87, #171;
+# ADR 0020, 0022).
 #
 # One SealedSecret, link-tokens, holds every token: the key is the token's
 # name (owner, k6), the value is the token. The backend mounts it as a
@@ -23,8 +24,10 @@
 set -euo pipefail
 
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-cert="${repo}/argocd/clusters/oke/sealed-secrets-cert.pem"
-dir="${repo}/apps/link-shortener/overlays/oke"
+# The live cluster's overlay and certificate. OKE (retired) used the same
+# sealing key (ADR 0022), so its overlay is no longer a target here.
+cert="${repo}/argocd/clusters/k3s/sealed-secrets-cert.pem"
+dir="${repo}/apps/link-shortener/overlays/k3s"
 entry="link-tokens-sealedsecret.yaml"
 out="${dir}/${entry}"
 kust="${dir}/kustomization.yaml"

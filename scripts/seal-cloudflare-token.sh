@@ -30,7 +30,9 @@ case "$component" in
 esac
 
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-cert="${repo}/argocd/clusters/oke/sealed-secrets-cert.pem"
+# The live cluster's certificate (ADR 0022: same key as the retired OKE
+# cluster, so files sealed with either copy decrypt on k3s).
+cert="${repo}/argocd/clusters/k3s/sealed-secrets-cert.pem"
 dir="${repo}/platform/${dir_name}"
 out="${dir}/cloudflare-api-token-sealedsecret.yaml"
 kust="${dir}/kustomization.yaml"
