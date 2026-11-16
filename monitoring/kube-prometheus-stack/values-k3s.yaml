@@ -1,5 +1,5 @@
 # k3s overrides on top of values.yaml: one A1 node, 2 OCPU / 12 GB, 50 GB boot
-# disk (ADR 0001, 0022). The counterpart of values-oke.yaml. Retention (8d),
+# disk (ADR 0001, 0022). Retention (8d),
 # resource requests/limits and Alertmanager routing come from values.yaml
 # unchanged; the memory budget that shows they fit is in the PR that added this
 # file (demo #116).

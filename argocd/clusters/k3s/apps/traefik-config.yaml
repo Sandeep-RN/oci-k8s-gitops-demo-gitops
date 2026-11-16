@@ -4,8 +4,9 @@
 # edge/traefik-k3s into its values. This app keeps that config in Git, with
 # the sealed public IP it needs and the ServiceMonitor for the edge panel.
 #
-# The file is not named traefik.yaml on purpose: CI treats that name as the
-# upstream chart behind the OKE load balancer and applies ADR 0020's checks.
+# The file is not named traefik.yaml on purpose: this is not an Application for
+# an upstream Traefik chart (the retired OKE target had one, ADR 0020); CI
+# checks this config on its own, against k3s's bundled chart.
 #
 # Synced/Healthy here only means the objects were applied. Whether k3s's Helm
 # job accepted the values shows in kube-system:

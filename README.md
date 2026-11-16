@@ -2,9 +2,10 @@
 
 Source of truth for the demo cluster. ArgoCD watches this repo and syncs it to
 the single-node k3s cluster that serves `https://demo.sandeeprn.in`. The OKE
-target served the site until 2026-11-12. It still exists with no public way in;
-its teardown is issue [#13](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/13)
-(due 2026-11-15). Once ArgoCD runs, **nothing is applied by hand with
+target served the site until 2026-11-12 and was destroyed on 2026-11-15 (issue
+[#13](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/13)); its
+manifests were removed in [#182](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/182).
+Once ArgoCD runs, **nothing is applied by hand with
 kubectl**: change manifests here and let ArgoCD sync.
 
 > **Status (2026-11-13):** k3s serves
@@ -38,12 +39,10 @@ apps/<name>/base               Kustomize base: Deployment, Services, PDB, Postgr
 apps/<name>/overlays/k3s       Live cluster (ADR 0022): the Ingress for demo.sandeeprn.in, the HSTS
                                and rate-limit middlewares (per client, 20/s burst 40) and the k3s
                                storage settings
-apps/<name>/overlays/oke       Retired OKE target (ADR 0015): ClusterIP only, strict spread, no
-                               Ingress since the DNS switch (2026-11-12)
 argocd/install                 ArgoCD, pinned upstream install (ArgoCD manages itself from here)
 argocd/clusters/<cluster>/     root.yaml (app of apps) + apps/ (AppProject, Applications)
-edge/<component>/              Helm values for cert-manager, external-dns and (OKE only) Traefik
-                               (ADR 0020); chart pinned in the cluster's Application
+edge/<component>/              Helm values for cert-manager and external-dns (ADR 0020);
+                               chart pinned in the cluster's Application
 edge/traefik-k3s               A kustomization, unlike the other edge/ folders: a HelmChartConfig
                                for the chart k3s ships, the sealed public IP, a ServiceMonitor
 platform/<addon>/              cluster add-ons and their sealed tokens (sealed-secrets,
@@ -57,9 +56,6 @@ tests/prometheus/              promtool unit tests for the alert rules (run in C
 .github/workflows/             validate (kubeconform, Helm render, promtool, amtool), gitleaks
 ```
 
-`monitoring/<cluster>/` exists for `k3s` and `oke`. `edge/traefik` holds the
-upstream Traefik chart values that only OKE used.
-
 ## Bootstrap a cluster (the only manual kubectl, once per cluster)
 
 Restore the Sealed Secrets keys **first**: a controller that starts without
@@ -71,8 +67,7 @@ kubectl apply --server-side -k argocd/install
 kubectl apply -f argocd/clusters/k3s/root.yaml
 ```
 
-The live root is `argocd/clusters/k3s/root.yaml`
-(`argocd/clusters/oke/root.yaml` is the retired OKE root). The full steps, as
+The live root is `argocd/clusters/k3s/root.yaml`. The full steps, as
 they were run on 2026-11-12, are in the
 [k3s bootstrap runbook](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/k3s-bootstrap.md).
 
@@ -114,8 +109,7 @@ Seal or rotate with `scripts/seal-cloudflare-token.sh cert-manager` or
 `oci-demo-k3s` on k3s, set in `edge/external-dns/values-k3s.yaml`; it was
 `oci-demo-oke` on OKE; prefix `edns-`). Never change either on a running
 cluster: the existing records would be orphaned. The OKE Ingress was removed by
-PR #59 on 2026-11-12, so the DNS records now belong to k3s. Do not delete them
-during the OKE teardown.
+PR #59 on 2026-11-12, so the DNS records belong to k3s.
 
 ## Working here
 

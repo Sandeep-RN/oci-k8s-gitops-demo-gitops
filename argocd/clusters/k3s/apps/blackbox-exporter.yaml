@@ -29,7 +29,7 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-      # Unlike on OKE: the monitoring app (apps/monitoring.yaml) normally
+      # The monitoring app (apps/monitoring.yaml) normally
       # creates this namespace, but this app must not fail if it syncs first
       # or if monitoring is not deployed yet. The exporter itself needs none of
       # the monitoring CRDs.

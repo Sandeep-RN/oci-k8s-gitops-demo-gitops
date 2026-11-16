@@ -97,47 +97,13 @@ jobs:
             done
           done
 
-      # ADR 0020 edge settings, checked on the rendered Traefik output so a
-      # misconfiguration fails at PR time, not on the live URL.
-      - name: Assert Traefik edge settings (ADR 0020)
+      # The edge panel (demo #92) must query the Traefik series, or it would
+      # silently show "No data". (The OKE-era checks on the upstream Traefik chart
+      # went with the OKE target, demo #182; k3s Traefik is asserted below.)
+      - name: Assert dashboard edge panel queries Traefik
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          files=(rendered/*-traefik.yaml)
-          [ ${#files[@]} -gt 0 ] || { echo "no rendered traefik app found"; exit 1; }
           fail() { echo "FAIL: $*"; exit 1; }
-          for f in "${files[@]}"; do
-            echo "::group::${f}"
-            svc='select(.kind == "Service" and .metadata.name == "traefik")'
-            [ "$(yq "${svc} | .spec.type" "$f")" = "LoadBalancer" ] || fail "Service is not a LoadBalancer"
-            [ "$(yq "${svc} | .metadata.annotations[\"oci.oraclecloud.com/load-balancer-type\"]" "$f")" = "nlb" ] || fail "load-balancer-type is not nlb"
-            [ "$(yq "${svc} | .spec.externalTrafficPolicy" "$f")" = "Cluster" ] || fail "externalTrafficPolicy is not Cluster"
-            [ "$(yq "${svc} | .metadata.annotations[\"oci-network-load-balancer.oraclecloud.com/security-list-management-mode\"]" "$f")" = "None" ] || fail "security-list-management-mode is not None"
-            # With externalTrafficPolicy Cluster this annotation makes requests fail.
-            if grep -q 'is-preserve-source' "$f"; then fail "is-preserve-source must be absent"; fi
-            args=$(yq 'select(.kind == "Deployment" and .metadata.name == "traefik") | .spec.template.spec.containers[0].args[]' "$f")
-            grep -qx -- '--entryPoints.web.http.redirections.entryPoint.to=:443' <<<"$args" || fail "HTTP is not redirected to 443"
-            grep -qx -- '--entryPoints.web.http.redirections.entryPoint.permanent=true' <<<"$args" || fail "redirect is not permanent"
-            grep -qx -- '--providers.kubernetesingress' <<<"$args" || fail "Ingress provider is off"
-            grep -qx -- '--api.dashboard=false' <<<"$args" || fail "dashboard is enabled"
-            [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "traefik") | .spec.replicas' "$f")" = "2" ] || fail "not 2 replicas"
-            [ "$(yq 'select(.kind == "PodDisruptionBudget") | .metadata.name' "$f")" = "traefik" ] || fail "no PodDisruptionBudget"
-            # Edge metrics (demo #92): scraped through a ClusterIP Service and a
-            # ServiceMonitor, never published on the NLB Service.
-            grep -qx -- '--metrics.prometheus=true' <<<"$args" || fail "Prometheus metrics are off"
-            [ "$(yq 'select(.kind == "Service" and .metadata.name == "traefik-metrics") | .spec.type' "$f")" = "ClusterIP" ] || fail "traefik-metrics Service is missing or not ClusterIP"
-            [ "$(yq 'select(.kind == "ServiceMonitor" and .metadata.name == "traefik") | .spec.selector.matchLabels["app.kubernetes.io/component"]' "$f")" = "metrics" ] || fail "no ServiceMonitor selecting the metrics Service"
-            if yq "${svc} | .spec.ports[].port" "$f" | grep -qx 9100; then fail "metrics port 9100 is on the public Service"; fi
-            echo "ok"
-            echo "::endgroup::"
-          done
-          # Chart version must be an exact X.Y.Z, never a range or "latest".
-          for app in argocd/clusters/*/apps/traefik.yaml; do
-            v=$(yq '.spec.sources[] | select(.chart == "traefik") | .targetRevision' "$app")
-            [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "${app}: chart version '${v}' is not pinned"
-          done
-          # The edge panel (demo #92) must query the Traefik series, or it
-          # would silently show "No data".
           dash=apps/link-shortener/base/dashboards/slo-redirect.json
           yq '.panels[].targets[]?.expr' "$dash" | grep -q 'traefik_entrypoint_requests_total' || fail "${dash}: no panel queries traefik_entrypoint_requests_total"
 
@@ -171,7 +137,7 @@ jobs:
           yq "${hcc} | .spec.valuesContent" <<<"$objs" > k3s-traefik-values.yaml
           [ -s k3s-traefik-values.yaml ] || fail "${dir}: empty valuesContent"
 
-          # Not named *-traefik.yaml: that pattern is the OKE chart (ADR 0020 step).
+          # Rendered next to the Argo apps' output, but this is k3s's bundled chart, not an Application.
           mkdir -p rendered
           f=rendered/k3s-traefik-config.yaml
           ./helm template traefik k3s-traefik.tgz --namespace kube-system \
@@ -206,7 +172,7 @@ jobs:
             fail "${dir}: traefik-public-ip must be sealed with --scope strict"
           fi
 
-          # As on OKE: port 80 only redirects, no dashboard.
+          # Port 80 only redirects to HTTPS; no dashboard.
           grep -qx -- '--entryPoints.web.http.redirections.entryPoint.to=:443' <<<"$args" || fail "HTTP is not redirected to 443"
           grep -qx -- '--entryPoints.web.http.redirections.entryPoint.permanent=true' <<<"$args" || fail "redirect is not permanent"
           grep -qx -- '--providers.kubernetesingress' <<<"$args" || fail "Ingress provider is off"
@@ -358,7 +324,6 @@ jobs:
             cluster=$(basename "$f" -external-dns.yaml)
             # Never change these for a running cluster (see above).
             case "$cluster" in
-              oke) owner=oci-demo-oke ;;
               k3s) owner=oci-demo-k3s ;;
               *) fail "${f}: no pinned TXT owner id for cluster ${cluster}" ;;
             esac
@@ -376,9 +341,8 @@ jobs:
             has --registry=txt
             has "--txt-owner-id=${owner}"
             has --txt-prefix=edns-
-            # The NLB's private IP is in the Ingress status too (OKE); it must
-            # never reach public DNS. On k3s it is a guard against a wrongly
-            # sealed node address (ADR 0022).
+            # Private addresses must never reach public DNS: a guard against a
+            # wrongly sealed node address (ADR 0022).
             has --exclude-target-net=10.0.0.0/8
             has --exclude-target-net=172.16.0.0/12
             has --exclude-target-net=192.168.0.0/16
@@ -410,18 +374,10 @@ jobs:
             echo "::group::${path}"
             out=$(kubectl kustomize "$path")
             names=$(yq 'select(.kind == "Ingress") | .metadata.name' <<<"$out")
-            case "$path" in
-              # demo.sandeeprn.in moved to k3s (ADR 0022, demo #8). Each
-              # cluster's external-dns would claim the same hostname, so OKE
-              # must have NO Ingress. Delete this case with the OKE target (#13).
-              apps/link-shortener/overlays/oke)
-                [ -z "$names" ] || fail "${path}: has an Ingress, but demo.sandeeprn.in is served by k3s (ADR 0022)" ;;
-              *)
-                [ -n "$names" ] || fail "${path}: no Ingress" ;;
-            esac
-            # The Ingress is the only way in (demo #91); Traefik's NLB is the
-            # one load balancer. A LoadBalancer Service here would add a second
-            # public address that skips TLS, HSTS and the rate limit.
+            [ -n "$names" ] || fail "${path}: no Ingress"
+            # The Ingress is the only way in (demo #91). A LoadBalancer Service here
+            # would add a second public address that skips TLS, HSTS and the rate
+            # limit.
             lbs=$(yq 'select(.kind == "Service" and .spec.type == "LoadBalancer") | .metadata.name' <<<"$out")
             [ -z "$lbs" ] || fail "${path}: LoadBalancer Service bypasses the Ingress: ${lbs}"
             mw=$(yq 'select(.kind == "Middleware" and .metadata.name == "rate-limit")' <<<"$out")

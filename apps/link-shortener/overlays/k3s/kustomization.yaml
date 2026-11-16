@@ -3,8 +3,8 @@ kind: Kustomization
 # Single-node k3s on Always Free (ADR 0001, 0022).
 resources:
   - ../../base
-  # The OKE sealing keys are reused on k3s (ADR 0022), so these are the same
-  # files as in overlays/oke, unchanged: same names and namespace, strict scope.
+  # The sealing keys of the retired OKE target are reused on k3s (ADR 0022), so
+  # these files were sealed once and kept: same names and namespace, strict scope.
   # Do not reseal them for k3s. Restore the keys BEFORE ArgoCD syncs this app
   # (docs/runbooks/k3s-bootstrap.md, step 2), or none of them decrypts.
   - postgres-credentials-sealedsecret.yaml
@@ -34,7 +34,7 @@ patches:
         value:
           name: BACKUP_CLUSTER
           value: k3s
-  # The landing page's example link (demo #103). Same code as overlays/oke: the
+  # The landing page's example link (demo #103). The
   # link is a row in the database, and the OKE backup restored at bootstrap
   # (k3s-bootstrap.md, step 6) brings that row with it. Public, not a secret.
   # Without the restore the page still works, with a link that answers 404.

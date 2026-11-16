@@ -4,8 +4,8 @@ metadata:
   name: backend
 spec:
   # It is honoured on every cluster. On the single k3s node (ADR 0001) a drain
-  # blocks on it, because no other node can take the pod; it was proven on the
-  # multi-node OKE target.
+  # blocks on it, because no other node can take the pod. (Proven on the retired
+  # multi-node OKE target, ADR 0015; its teardown was blocked by it too, demo #13.)
   minAvailable: 1
   selector:
     matchLabels:
