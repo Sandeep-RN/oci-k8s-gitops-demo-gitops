@@ -18,8 +18,7 @@ spec:
   sources:
     - repoURL: https://prometheus-community.github.io/helm-charts
       chart: kube-prometheus-stack
-      # Pinned, the same version as OKE; CI renders this exact version with the
-      # values below.
+      # Pinned; CI renders this exact version with the values below.
       targetRevision: 92.3.0
       helm:
         releaseName: kps
@@ -43,7 +42,7 @@ spec:
       - CreateNamespace=true
       # The operator's CRDs exceed the client-side apply annotation size limit.
       - ServerSideApply=true
-      # Differs from OKE: on a fresh k3s bootstrap this app and sealed-secrets
+      # On a fresh k3s bootstrap this app and sealed-secrets
       # share wave -1, so the SealedSecret CRD may not exist on the first sync.
       # Skip that dry run and retry instead of failing the whole sync.
       - SkipDryRunOnMissingResource=true

@@ -31,9 +31,9 @@ policy: sync
 
 registry: txt
 # txtOwnerId is per cluster (values-<cluster>.yaml), so a later k3s instance
-# never claims OKE's records. NEVER change txtOwnerId or txtPrefix on a running
-# cluster: the existing records would no longer be owned, so they would be
-# neither updated nor deleted. CI pins both values.
+# never claims another cluster's records (OKE's, while it existed). NEVER
+# change txtOwnerId or txtPrefix on a running cluster: the existing records
+# would no longer be owned, so they would be neither updated nor deleted. CI pins both values.
 # A fixed prefix keeps the TXT owner record off the A record's own name.
 txtPrefix: edns-
 
@@ -55,8 +55,8 @@ extraArgs:
 interval: 1m
 triggerLoopOnEvent: true
 
-# Sized for small nodes (1 OCPU / 8 GB on OKE, 2 OCPU / 12 GB on k3s) shared with
-# the app, Postgres and monitoring.
+# Sized for a small node (2 OCPU / 12 GB on k3s) shared with the app, Postgres
+# and monitoring.
 # One replica: a short outage only delays a DNS change.
 resources:
   requests: { cpu: 10m, memory: 32Mi }

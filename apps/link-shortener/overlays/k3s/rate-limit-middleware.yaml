@@ -3,11 +3,11 @@
 # Per client on k3s. Traefik's Service uses externalTrafficPolicy Local (ADR 0022,
 # edge/traefik-k3s), so the pod sees each visitor's real address and the default
 # source criterion (the remote address) gives every client its own bucket. On
-# OKE this was impossible (NLB and Cluster policy hid every client), which is why
-# overlays/oke runs a low shared "flood guard" of 5/s burst 10 instead (demo #106).
+# the retired OKE target this was impossible (NLB and Cluster policy hid every
+# client), so it ran a low shared "flood guard" of 5/s burst 10 instead (demo #106).
 #
 # Values are the original per-client design from ADR 0020 / demo #88 (20/s, burst
-# 40), not OKE's lowered ones:
+# 40), not the lowered ones OKE needed:
 #   - one page load is about 5-10 requests, so burst 40 never touches a human;
 #   - visitors behind a company or mobile-carrier NAT share one IP, and a 429 for
 #     a recruiter costs more than a scripted client getting 20 redirects a second;

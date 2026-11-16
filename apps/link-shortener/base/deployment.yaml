@@ -32,7 +32,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       # ScheduleAnyway: on the single k3s node both pods must still schedule.
-      # The OKE overlay can tighten this to DoNotSchedule across nodes/zones.
+      # An overlay for a multi-node cluster can tighten this to DoNotSchedule.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

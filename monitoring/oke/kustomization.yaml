@@ -1,9 +1,0 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-# Cluster-specific monitoring objects that are not part of the Helm chart.
-# Deployed as the third source of argocd/clusters/oke/apps/monitoring.yaml.
-namespace: monitoring
-resources:
-  - grafana-admin-sealedsecret.yaml
-  # Discord webhook URL for Alertmanager, sealed by the owner (see README).
-  - alertmanager-discord-sealedsecret.yaml

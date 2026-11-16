@@ -7,18 +7,19 @@ and the DNS switch: oci-k8s-gitops-demo `docs/runbooks/k3s-bootstrap.md`.
   Sealed Secrets keys are restored.
 - `apps/`: what ArgoCD runs on this cluster.
 - `sealed-secrets-cert.pem`: the Sealed Secrets **public** certificate. It can
-  only encrypt, so it is safe to commit. It is a copy of
-  `../oke/sealed-secrets-cert.pem`: this cluster runs on the OKE sealing keys,
-  restored from the offline backup (ADR 0022), so every sealed file in this
-  repo decrypts on both clusters without resealing.
+  only encrypt, so it is safe to commit. It is the certificate of the OKE
+  target's sealing keys (the OKE copy was removed with that target): this
+  cluster runs on those keys, restored from the offline backup (ADR 0022), so
+  every sealed file in this repo decrypts without resealing.
 
-## What differs from OKE
+## What differed from OKE (retired)
 
-The OKE target served the site until 2026-11-12. It still exists with no
-public way in; its teardown is issue
-[#13](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/13) (due 2026-11-15).
+The OKE target served the site until 2026-11-12 and was destroyed on 2026-11-15
+(issue [#13](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/13)). Its
+folders were removed in [#182](https://github.com/Sandeep-RN/oci-k8s-gitops-demo/issues/182);
+the table stays as the design record (ADR 0015, 0022).
 
-| | OKE | k3s |
+| | OKE (retired) | k3s |
 |---|---|---|
 | Traefik | upstream chart, `apps/traefik.yaml` | the chart k3s ships, configured by `apps/traefik-config.yaml` (`edge/traefik-k3s`) |
 | Way in | Network Load Balancer | the node's public IP through k3s's ServiceLB, no load balancer |
@@ -36,7 +37,7 @@ kubectl -n kube-system get svc traefik -o jsonpath='{.spec.externalTrafficPolicy
 kubectl get ingress -A                                                                # ADDRESS = the public IP
 ```
 
-Sealing works as on OKE, with this folder's certificate:
+Sealing, with this folder's certificate:
 
 ```
 kubectl create secret generic NAME -n NAMESPACE --dry-run=client -o json --from-literal=key=value \

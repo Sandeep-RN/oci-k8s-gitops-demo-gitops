@@ -3,11 +3,11 @@
 # load balancer on k3s: Traefik writes that address into the status itself
 # (edge/traefik-k3s). Three sources: the pinned upstream chart, this repo for
 # the values files, and this repo's platform/external-dns for the sealed
-# Cloudflare token (the same sealed file as OKE: the sealing keys are shared).
+# Cloudflare token (sealed with the key the retired OKE target used, ADR 0022).
 #
-# It never takes over a record it does not own. While OKE still holds
-# demo.sandeeprn.in (TXT owner oci-demo-oke), this instance leaves it alone;
-# the switch is "OKE deletes its record, then k3s creates its own" (ADR 0022).
+# It never takes over a record it does not own: it manages only records with
+# its own TXT owner id (oci-demo-k3s). The cutover from OKE was "OKE deletes its
+# record, then k3s creates its own" (ADR 0022).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
