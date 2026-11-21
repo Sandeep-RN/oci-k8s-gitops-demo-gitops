@@ -1,0 +1,22 @@
+# Requests and limits for the Sealed Secrets controller (upstream sets none:
+# QoS BestEffort, first to be evicted under memory pressure; and this
+# controller holds the sealing keys' only live copy).
+#
+# Measured on the k3s node on 2026-11-21 (issue demo #190): 10-21Mi. A 32Mi
+# request reserves a safe floor; the 128Mi limit leaves headroom for
+# re-encrypting many SealedSecrets at once. No CPU limit (it would only
+# throttle a decrypt burst). Re-check after a few weeks: OOMKilled restarts
+# would mean the limit is too tight.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sealed-secrets-controller
+  namespace: kube-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: sealed-secrets-controller
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}

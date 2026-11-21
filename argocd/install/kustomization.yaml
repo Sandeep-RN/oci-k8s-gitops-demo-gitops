@@ -6,3 +6,6 @@ namespace: argocd
 resources:
   - namespace.yaml
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.6/manifests/install.yaml
+# Memory/CPU requests and limits (upstream sets none); sizes and why in the file.
+patches:
+  - path: resources-patch.yaml

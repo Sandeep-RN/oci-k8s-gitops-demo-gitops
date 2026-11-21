@@ -9,3 +9,6 @@ kind: Kustomization
 # backed up outside the repo (runbook: oci-k8s-gitops-demo/docs/runbooks/sealed-secrets.md).
 resources:
   - https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.40.0/controller.yaml
+# Memory/CPU requests and limits (upstream sets none); sizes and why in the file.
+patches:
+  - path: resources-patch.yaml
