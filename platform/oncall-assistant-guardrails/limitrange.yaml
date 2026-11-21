@@ -1,0 +1,27 @@
+# Supplies defaults so no pod runs uncapped (a pod without limits would be
+# refused by the quota, which needs them) and sets the largest a single
+# container may be. ADR 0025 gives no per-container numbers; these follow its
+# budget table. The tenant's manifests (#195) set explicit values; the defaults
+# are only a safety net for a container that forgets.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-defaults
+spec:
+  limits:
+    - type: Container
+      # Default limit: the smallest budget line (Postgres, 256Mi).
+      default:
+        memory: 256Mi
+        cpu: 500m
+      # Default request: memory equals the limit (so the scheduler counts what
+      # the pod can use); CPU stays below the limit, which keeps the pod
+      # Burstable and never Guaranteed (ADR 0025).
+      defaultRequest:
+        memory: 256Mi
+        cpu: 100m
+      # The largest budget lines (app and indexing Job, 384Mi) and the whole
+      # namespace's CPU. One container cannot claim the entire cap.
+      max:
+        memory: 384Mi
+        cpu: "1"

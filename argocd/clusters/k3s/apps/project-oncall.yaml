@@ -1,0 +1,28 @@
+# The on-call assistant's own AppProject (ADR 0025). The existing "demo" project
+# allows only the link-shortener namespace, so the assistant needs its own. It
+# may deploy ONLY into its namespace, ONLY from this repo, and may NOT create
+# the objects that set its own cap: a change to the assistant's folder must not
+# be able to raise its own limits. Created before the apps (sync wave -1).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: oncall
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: On-call assistant tenant (own namespace, platform-owned cap)
+  sourceRepos:
+    - https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: oncall-assistant
+  # No cluster-scoped kinds at all: not the Namespace (the platform creates it)
+  # and not the PriorityClass. An empty list means "none allowed" in ArgoCD.
+  clusterResourceWhitelist: []
+  # The cap and the per-container defaults belong to the platform Application.
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange

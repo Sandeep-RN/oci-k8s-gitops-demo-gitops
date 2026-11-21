@@ -263,6 +263,79 @@ jobs:
             [[ "$v" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "${app}: chart version '${v}' is not pinned"
           done
 
+      # ADR 0025: the on-call assistant runs inside a hard cap that the PLATFORM
+      # owns. These checks pin the cap's values and the AppProject's limits, so a
+      # later edit cannot quietly loosen either. Changing a value here means
+      # changing ADR 0025 too. The tenant's own folder (#195) is checked in the
+      # loop at the end: it may not ship the objects that set its own cap.
+      - name: Assert oncall-assistant guardrails (ADR 0025)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail() { echo "FAIL: $*"; exit 1; }
+          dir=platform/oncall-assistant-guardrails
+          ns=oncall-assistant
+          out=$(kubectl kustomize "$dir")
+
+          # The Namespace survives a prune of its Application (it holds the DB).
+          nssel="select(.kind == \"Namespace\" and .metadata.name == \"${ns}\")"
+          [ -n "$(yq "${nssel} | .metadata.name" <<<"$out")" ] || fail "${dir}: no Namespace ${ns}"
+          [ "$(yq "${nssel} | .metadata.annotations[\"argocd.argoproj.io/sync-options\"]" <<<"$out")" = "Delete=false" ] || fail "${dir}: Namespace ${ns} must carry sync-options Delete=false"
+
+          # The cap: exactly one quota, in the tenant's namespace, with the ADR's values.
+          q='select(.kind == "ResourceQuota")'
+          [ "$(yq "${q} | .metadata.name" <<<"$out" | wc -l)" -eq 1 ] || fail "${dir}: expected exactly one ResourceQuota"
+          [ "$(yq "${q} | .metadata.namespace" <<<"$out")" = "$ns" ] || fail "${dir}: ResourceQuota is not in namespace ${ns}"
+          for pair in limits.memory=1Gi limits.cpu=1 requests.memory=1Gi requests.cpu=1; do
+            k="${pair%%=*}"; want="${pair#*=}"
+            [ "$(yq "${q} | .spec.hard[\"${k}\"]" <<<"$out")" = "$want" ] || fail "${dir}: ResourceQuota ${k} is not ${want}"
+          done
+
+          # Defaults so no pod runs uncapped; a single container cannot take the whole cap.
+          lr='select(.kind == "LimitRange") | .spec.limits[] | select(.type == "Container")'
+          [ "$(yq "select(.kind == \"LimitRange\") | .metadata.namespace" <<<"$out")" = "$ns" ] || fail "${dir}: no LimitRange in namespace ${ns}"
+          for pair in default.memory=256Mi default.cpu=500m defaultRequest.memory=256Mi defaultRequest.cpu=100m max.memory=384Mi max.cpu=1; do
+            k="${pair%%=*}"; want="${pair#*=}"
+            [ "$(yq "${lr} | .${k}" <<<"$out")" = "$want" ] || fail "${dir}: LimitRange ${k} is not ${want}"
+          done
+
+          # Below every other workload, never preempts, never the cluster default.
+          pc='select(.kind == "PriorityClass" and .metadata.name == "oncall-assistant-low")'
+          [ "$(yq "${pc} | .value" <<<"$out")" -lt 0 ] || fail "${dir}: PriorityClass value must be negative"
+          [ "$(yq "${pc} | .preemptionPolicy" <<<"$out")" = "Never" ] || fail "${dir}: PriorityClass preemptionPolicy must be Never"
+          [ "$(yq "${pc} | .globalDefault // false" <<<"$out")" = "false" ] || fail "${dir}: PriorityClass must not be the global default"
+
+          # The tenant's AppProject: this repo only, its namespace only, nothing
+          # cluster-scoped, and no say over its own quota or defaults.
+          projects=(argocd/clusters/*/apps/project-oncall.yaml)
+          [ ${#projects[@]} -gt 0 ] || fail "no project-oncall.yaml (AppProject oncall) found"
+          for p in "${projects[@]}"; do
+            [ "$(yq '.metadata.name' "$p")" = "oncall" ] || fail "${p}: AppProject must be named oncall"
+            [ "$(yq '.spec.sourceRepos | length' "$p")" -eq 1 ] || fail "${p}: sourceRepos must list exactly one repo"
+            [ "$(yq '.spec.sourceRepos[0]' "$p")" = "https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git" ] || fail "${p}: sourceRepos must be this repo only"
+            [ "$(yq '.spec.destinations | length' "$p")" -eq 1 ] || fail "${p}: destinations must list exactly one entry"
+            [ "$(yq '.spec.destinations[0].namespace' "$p")" = "$ns" ] || fail "${p}: destination namespace must be ${ns}"
+            [ "$(yq '.spec.destinations[0].server' "$p")" = "https://kubernetes.default.svc" ] || fail "${p}: destination server must be the local cluster"
+            [ "$(yq '(.spec.clusterResourceWhitelist // []) | length' "$p")" -eq 0 ] || fail "${p}: no cluster-scoped kind may be whitelisted"
+            for kind in ResourceQuota LimitRange; do
+              [ -n "$(yq ".spec.namespaceResourceBlacklist[]? | select(.group == \"\" and .kind == \"${kind}\") | .kind" "$p")" ] || fail "${p}: ${kind} must be in namespaceResourceBlacklist"
+            done
+          done
+
+          # Every Application in project oncall stays in the tenant's namespace and
+          # ships none of the objects that set its own cap. (None exists until #195.)
+          for app in argocd/clusters/*/apps/*.yaml; do
+            [ "$(yq 'select(.kind == "Application") | .spec.project' "$app")" = "oncall" ] || continue
+            [ "$(yq '.spec.destination.namespace' "$app")" = "$ns" ] || fail "${app}: a project-oncall Application must deploy into ${ns}"
+            tenant=$(kubectl kustomize "$(yq '.spec.source.path' "$app")")
+            bad=$(yq 'select(.kind == "ResourceQuota" or .kind == "LimitRange" or .kind == "PriorityClass" or .kind == "Namespace") | .kind + "/" + .metadata.name' <<<"$tenant")
+            [ -z "$bad" ] || fail "${app}: the tenant's folder must not ship its own guardrails: ${bad}"
+          done
+          # The platform's own Application is the only one that may carry them, and
+          # it must not run in the tenant's project (that would let it be loosened).
+          [ "$(yq '.spec.project' argocd/clusters/k3s/apps/oncall-assistant-guardrails.yaml)" = "default" ] || fail "oncall-assistant-guardrails must be in project default"
+          echo "ok"
+
       # ADR 0020: in every deployed link-shortener overlay, the backend reads its
       # link-creation tokens from the link-tokens Secret, mounted whole (a
       # subPath mount never sees a rotation or revocation) at the directory the

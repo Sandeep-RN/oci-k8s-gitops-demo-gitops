@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oncall-assistant
+  annotations:
+    # Keep this Namespace if the Application that deploys it is ever deleted or
+    # pruned. The tenant's database (a cache, ADR 0025) lives in it, and deleting
+    # a Namespace deletes the guardrails with it. Delete one on purpose with
+    # kubectl, never by accident (same reasoning as the link-shortener Namespace).
+    argocd.argoproj.io/sync-options: Delete=false
