@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Explicit namespace so every namespaced object here is stamped with it and the
+# checks in validate.yml can read it. The Namespace and the cluster-scoped
+# PriorityClass are not affected by this field.
+namespace: oncall-assistant
+resources:
+  - namespace.yaml
+  - resourcequota.yaml
+  - limitrange.yaml
+  - priorityclass.yaml

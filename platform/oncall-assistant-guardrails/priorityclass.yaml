@@ -1,0 +1,16 @@
+# Below the link shortener's (which runs at the default priority 0). It applies
+# at scheduling time only: if requests ever fill the node, the site's pods may
+# preempt the assistant's, and the assistant preempts nothing
+# (preemptionPolicy: Never). It does NOT make the assistant the kubelet's first
+# eviction choice; the quota is what protects the site (ADR 0025).
+# PriorityClass is cluster-scoped, so this file is deployed by the platform
+# Application (project "default"), never by the tenant's own project.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: oncall-assistant-low
+value: -100
+preemptionPolicy: Never
+# Never the default for pods outside this tenant.
+globalDefault: false
+description: On-call assistant tenant. Lower than every other workload; never preempts.

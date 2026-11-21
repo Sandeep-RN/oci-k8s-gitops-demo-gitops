@@ -1,0 +1,33 @@
+# Platform-owned guardrails for the on-call assistant tenant (ADR 0025): its
+# Namespace, ResourceQuota, LimitRange and PriorityClass. Project "default"
+# because the PriorityClass is cluster-scoped; the tenant's own Application
+# (#195) runs in project "oncall", which may not create any of these.
+#
+# No resources-finalizer on purpose (unlike link-shortener): deleting or pruning
+# this Application must leave the quota in place. A cap that disappears with its
+# Application would let the tenant run uncapped on the shared node.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: oncall-assistant-guardrails
+  namespace: argocd
+  annotations:
+    # After the AppProject (wave -1); before the tenant's own Application (#195),
+    # which must start only once the quota and defaults exist.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+    targetRevision: main
+    path: platform/oncall-assistant-guardrails
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: oncall-assistant
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }
