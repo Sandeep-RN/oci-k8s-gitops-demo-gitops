@@ -56,8 +56,9 @@ monitoring/kube-prometheus-stack/  Helm values (shared + per cluster); chart pin
 monitoring/blackbox-exporter   Helm values for the blackbox exporter used by the redirect probe
 monitoring/<cluster>/          objects the chart does not create (Grafana admin and Discord webhook SealedSecrets)
 scripts/                       seal-link-tokens.sh, seal-cloudflare-token.sh,
-                               seal-traefik-public-ip.sh and seal-oncall-secrets.sh (sealing
-                               needs no cluster access)
+                               seal-traefik-public-ip.sh, seal-oncall-secrets.sh and
+                               seal-demo-tokens.sh (sealing needs no cluster access);
+                               test-oncall-roles.sh (role SQL on a real Postgres, run in CI)
 tests/prometheus/              promtool unit tests for the alert rules (run in CI)
 .github/workflows/             validate (kubeconform, Helm render, promtool, amtool), gitleaks
 ```
@@ -112,7 +113,19 @@ roles (admin, indexer, read-only app). `scripts/seal-oncall-secrets.sh`
 creates the missing ones: it asks only for the Groq key (hidden prompt) and
 generates the database passwords, which are never shown or stored (the
 database is a cache). Re-seal one by name to rotate it; the admin password
-is the exception, see the script header.
+is the exception, see the script header. The read-only app role has one
+exception (ADR 0003): it may insert into and update one table, `llm_usage`, the
+daily LLM budget's ledger, and only inside an explicit READ WRITE transaction;
+`scripts/test-oncall-roles.sh` proves that on a real Postgres.
+
+**Demo tokens** (ADR 0003): a named token lifts the public share of the
+assistant's daily LLM budget for its holder. The cluster holds only the SHA-256
+of each token: all hashes are keys of one SealedSecret, `demo-tokens`, mounted
+into the app as one optional file per token (the app starts before the first one
+exists). Generate a token (`openssl rand -hex 32`), keep it in the password
+manager, then `scripts/seal-demo-tokens.sh NAME...` (hidden prompt) hashes it
+and seals only the hash. Revoke by deleting the key from the file; the mount
+refreshes in about a minute, with no restart.
 
 **Cloudflare tokens** (ADR 0020): cert-manager and external-dns each have
 their own token (Zone:DNS:Edit and Zone:Zone:Read on `sandeeprn.in` only).

@@ -13,3 +13,11 @@ data:
   PGDATABASE: oncall
   # Fail fast instead of hanging a request or an index run on a dead socket.
   PGCONNECT_TIMEOUT: "5"
+  # The app's daily LLM budget (ADR 0003, app issue #6), counted in TOKENS
+  # because the provider's free tier runs out of tokens (Groq: 200K a day)
+  # long before it runs out of requests. TOTAL is the provider's daily
+  # allowance; PCT is the share public visitors may use, the rest is for
+  # demo-token holders. The provider's own limit stays the hard stop. Read by
+  # the app only: the index and role Jobs ignore them. Integers, checked in CI.
+  DAILY_TOKENS_TOTAL: "200000"
+  PUBLIC_SHARE_PCT: "70"
