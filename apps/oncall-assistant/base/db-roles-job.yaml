@@ -1,0 +1,83 @@
+# Creates or updates the indexer and app roles and the pgvector extension
+# (sql/roles.sql; same pattern as the link shortener's ADR 0018 Job). Only this
+# Job and the Postgres pod hold the admin credentials.
+#
+# An ArgoCD Sync hook, so it runs on every sync, in this order:
+#   wave 0  Postgres, Secrets, ConfigMap (waited on until healthy)
+#   wave 1  this Job (waited on until it completes)
+#   wave 2  the app Deployment and the index CronJob
+# If the Job fails (Postgres down), the sync stops before the app changes; the
+# Application's sync retry tries again.
+#
+# Memory: its 64Mi is a line in the ADR 0025 budget. A sync can start while the
+# app, Postgres and an index run are all up, and the four together are exactly
+# the 1Gi quota, so this Job always fits.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: oncall-db-roles
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "1"
+    # Keep the last run (for its logs) until the next sync replaces it.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oncall-db-roles
+        app.kubernetes.io/part-of: oncall-assistant
+    spec:
+      priorityClassName: oncall-assistant-low
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999 # "postgres" in the Debian-based pgvector image
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: psql
+          # Same image as the server, so the client matches its version.
+          image: docker.io/pgvector/pgvector:0.8.7-pg18@sha256:38681dc6eaf55308e2a4c6de392d131652dcfac70e1263e35cd9b5ea3fe39782
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            # Admin: runs the script.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: username }
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: password }
+            # The roles the script creates. Read with \getenv, not passed as arguments.
+            - name: INDEXER_PGUSER
+              valueFrom:
+                secretKeyRef: { name: postgres-indexer-credentials, key: username }
+            - name: INDEXER_PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-indexer-credentials, key: password }
+            - name: APP_PGUSER
+              valueFrom:
+                secretKeyRef: { name: postgres-app-credentials, key: username }
+            - name: APP_PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-app-credentials, key: password }
+          command: ["psql", "-X", "--quiet", "-f", "/sql/roles.sql"]
+          volumeMounts:
+            - { name: sql, mountPath: /sql, readOnly: true }
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { cpu: 50m, memory: 64Mi }
+      volumes:
+        - name: sql
+          configMap:
+            name: oncall-db-roles-sql

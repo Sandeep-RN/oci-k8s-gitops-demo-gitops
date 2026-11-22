@@ -1,0 +1,104 @@
+# The on-call assistant API: POST /ask, GET /healthz (ADR 0025; app repo
+# Sandeep-RN/oncall-assistant). It embeds the question with the model baked into
+# the image, searches the index read-only, and asks Groq for a cited answer.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  annotations:
+    # After the oncall-db-roles Job (wave 1), which creates the role it uses.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # One replica and Recreate (ADR 0025): the quota has no room for a surge pod,
+  # so a rolling update would hang with its second pod refused. Recreate stops
+  # the old pod first; each deploy is a short gap the 99% target absorbs.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: app
+        app.kubernetes.io/part-of: oncall-assistant
+    spec:
+      priorityClassName: oncall-assistant-low
+      automountServiceAccountToken: false # the app never calls the Kubernetes API
+      # An answer takes up to about 8 s; let one in flight finish on shutdown.
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001 # matches the numeric UID in the app's Dockerfile
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          # Tag is set in kustomization.yaml by the app repo's tag-bump PR.
+          image: ghcr.io/sandeep-rn/oncall-assistant
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            # The read-only role (sql/roles.sql), never the admin or the indexer.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: { name: postgres-app-credentials, key: username }
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-app-credentials, key: password }
+            # The public demo's provider (ADR 0025). The KodeKey dev/eval key
+            # never enters the cluster.
+            - name: LLM_PROVIDER
+              value: groq
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef: { name: groq-api-key, key: GROQ_API_KEY }
+            # glibc keeps one malloc arena per thread and rarely gives memory
+            # back; two arenas cut the peak (app ADR 0001) at no measurable cost.
+            - name: MALLOC_ARENA_MAX
+              value: "2"
+          ports:
+            - name: http
+              containerPort: 8000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # ADR 0025 budget line. Measured 2026-11-22 (x86, demo #195): cgroup
+          # peak 247 MiB with four questions at once, so 320Mi leaves ~25%.
+          # CPU: the time goes to the provider, not here; 300m starts the app
+          # (model load) in about 13 s on x86.
+          resources:
+            requests: { cpu: 100m, memory: 320Mi }
+            limits: { cpu: 300m, memory: 320Mi }
+          # /healthz is pod-local (it never touches the database or the
+          # provider, as ADR 0016 asks), and uvicorn answers only after the model
+          # is loaded, so it is right for all three probes. A database or
+          # provider problem shows as a 503 from /ask, not as a restart.
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24 # 2 min: the model loads slower under the CPU limit on arm64
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          volumeMounts:
+            # Writable scratch space, needed because the root filesystem is read-only.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

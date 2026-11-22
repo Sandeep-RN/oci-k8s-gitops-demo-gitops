@@ -1,0 +1,15 @@
+# Non-secret connection settings, shared by the app, the index CronJob and the
+# role Job. Each pod adds its own PGUSER/PGPASSWORD from its own Secret, so no
+# pod holds a role it does not need (three roles, see sql/roles.sql).
+# The app reads the standard libpq variables because DATABASE_URL is left unset:
+# a URL would have to carry the password inside a ConfigMap or a built string.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGDATABASE: oncall
+  # Fail fast instead of hanging a request or an index run on a dead socket.
+  PGCONNECT_TIMEOUT: "5"

@@ -323,7 +323,7 @@ jobs:
           done
 
           # Every Application in project oncall stays in the tenant's namespace and
-          # ships none of the objects that set its own cap. (None exists until #195.)
+          # ships none of the objects that set its own cap.
           for app in argocd/clusters/*/apps/*.yaml; do
             [ "$(yq 'select(.kind == "Application") | .spec.project' "$app")" = "oncall" ] || continue
             [ "$(yq '.spec.destination.namespace' "$app")" = "$ns" ] || fail "${app}: a project-oncall Application must deploy into ${ns}"
@@ -335,6 +335,218 @@ jobs:
           # it must not run in the tenant's project (that would let it be loosened).
           [ "$(yq '.spec.project' argocd/clusters/k3s/apps/oncall-assistant-guardrails.yaml)" = "default" ] || fail "oncall-assistant-guardrails must be in project default"
           echo "ok"
+
+      # ADR 0025, demo #195: the tenant's own workloads. The quota refuses what
+      # does not fit only when a pod is created, which on this node means a
+      # rollout that hangs or a nightly Job that never starts. These checks
+      # catch it at review time instead:
+      #   - every container: memory request = limit, CPU request < limit (so
+      #     the pod is Burstable, never Guaranteed), the tenant's PriorityClass,
+      #     no service-account token;
+      #   - the BUDGET: the memory and CPU limits of every pod, all running at
+      #     once, fit the platform's quota (read from the platform folder);
+      #   - no surge pods: one replica with Recreate, CronJobs with Forbid;
+      #   - images pinned (the app by its git SHA tag, others by digest);
+      #   - least privilege: each database credential is referenced only by the
+      #     workloads that need it (admin: Postgres and the role Job);
+      #   - the four strict-scoped SealedSecrets with their keys.
+      - name: Assert oncall-assistant workloads (ADR 0025)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # stderr, so a failure inside $(...) is still printed.
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+          ns=oncall-assistant
+          # Quantities in the forms these manifests use; anything else fails
+          # loudly rather than being compared wrongly.
+          mi() { case "$1" in *Gi) echo $(( ${1%Gi} * 1024 )) ;; *Mi) echo "${1%Mi}" ;; *) fail "memory '$1': use Mi or Gi" ;; esac; }
+          mc() { case "$1" in *m) echo "${1%m}" ;; ''|*[!0-9]*) fail "CPU '$1': use whole cores or millicores" ;; *) echo $(( $1 * 1000 )) ;; esac; }
+
+          guard=$(kubectl kustomize platform/oncall-assistant-guardrails)
+          q='select(.kind == "ResourceQuota") | .spec.hard'
+          quota_mem=$(mi "$(yq "${q}[\"limits.memory\"]" <<<"$guard")")
+          quota_cpu=$(mc "$(yq "${q}[\"limits.cpu\"]" <<<"$guard")")
+          max_mem=$(mi "$(yq 'select(.kind == "LimitRange") | .spec.limits[] | select(.type == "Container") | .max.memory' <<<"$guard")")
+
+          apps=()
+          for app in argocd/clusters/*/apps/*.yaml; do
+            [ "$(yq 'select(.kind == "Application") | .spec.project' "$app")" = "oncall" ] && apps+=("$app")
+          done
+          [ ${#apps[@]} -gt 0 ] || fail "no Application in project oncall"
+          for app in "${apps[@]}"; do
+            path=$(yq '.spec.source.path' "$app")
+            echo "::group::${path}"
+            out=$(kubectl kustomize "$path")
+            # One row per container: workload, container, the four quantities,
+            # PriorityClass, token automount, image, Secrets the pod references.
+            # -N: no "---" lines between results from different documents.
+            rows=$(yq -N '
+              select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "Job" or .kind == "CronJob")
+              | (.kind + "/" + .metadata.name) as $id
+              | (.spec.jobTemplate.spec.template.spec // .spec.template.spec) as $p
+              | ([$p | .. | select(tag == "!!map") | (.secretKeyRef.name // .secretRef.name // .secret.secretName // "")] | map(select(. != "")) | unique | join(",")) as $secrets
+              | (($p.initContainers // []) + $p.containers) | .[]
+              | [$id, .name,
+                 .resources.requests.memory // "-", .resources.limits.memory // "-",
+                 .resources.requests.cpu // "-", .resources.limits.cpu // "-",
+                 $p.priorityClassName // "-",
+                 ($p.automountServiceAccountToken | tostring),
+                 .image, $secrets] | @tsv' <<<"$out")
+            # @tsv prints an empty line for each object that is not a workload.
+            rows=$(grep -v '^$' <<<"$rows" || true)
+            [ -n "$rows" ] || fail "${path}: no workloads"
+            sum_mem=0; sum_cpu=0
+            while IFS=$'\t' read -r id c mreq mlim creq clim pc am image secrets; do
+              where="${path}: ${id} container ${c}"
+              for v in "$mreq" "$mlim" "$creq" "$clim"; do
+                [ "$v" != "-" ] || fail "${where}: needs memory and CPU requests and limits"
+              done
+              mr=$(mi "$mreq"); ml=$(mi "$mlim"); cr=$(mc "$creq"); cl=$(mc "$clim")
+              [ "$mr" -eq "$ml" ] || fail "${where}: memory request (${mreq}) must equal the limit (${mlim})"
+              [ "$cr" -lt "$cl" ] || fail "${where}: CPU request (${creq}) must be below the limit (${clim}), or the pod could be Guaranteed"
+              [ "$ml" -le "$max_mem" ] || fail "${where}: memory ${mlim} is above the LimitRange max"
+              [ "$pc" = "oncall-assistant-low" ] || fail "${where}: priorityClassName must be oncall-assistant-low"
+              [ "$am" = "false" ] || fail "${where}: automountServiceAccountToken must be false"
+              grep -qE '^ghcr\.io/sandeep-rn/oncall-assistant:[0-9a-f]{40}$|@sha256:[0-9a-f]{64}$' <<<"$image" || fail "${where}: image ${image} is not pinned (git SHA tag or digest)"
+              sum_mem=$(( sum_mem + ml )); sum_cpu=$(( sum_cpu + cl ))
+              # Which workload may hold which credential.
+              for s in ${secrets//,/ }; do
+                case "${s}=${id}" in
+                  postgres-credentials=StatefulSet/postgres | postgres-credentials=Job/oncall-db-roles) ;;
+                  postgres-indexer-credentials=CronJob/index | postgres-indexer-credentials=Job/oncall-db-roles) ;;
+                  postgres-app-credentials=Deployment/app | postgres-app-credentials=Job/oncall-db-roles) ;;
+                  groq-api-key=Deployment/app) ;;
+                  *) fail "${where}: ${id} must not reference Secret ${s}" ;;
+                esac
+              done
+            done <<<"$rows"
+            # Every pod at once (ADR 0025: the budget fits the cap at peak).
+            echo "budget: memory ${sum_mem}Mi of ${quota_mem}Mi, CPU ${sum_cpu}m of ${quota_cpu}m"
+            [ "$sum_mem" -le "$quota_mem" ] || fail "${path}: memory limits add up to ${sum_mem}Mi, over the ${quota_mem}Mi quota"
+            [ "$sum_cpu" -le "$quota_cpu" ] || fail "${path}: CPU limits add up to ${sum_cpu}m, over the ${quota_cpu}m quota"
+            # The app and the index use their own roles, never the admin.
+            grep -qP '^Deployment/app\t.*[\t,]postgres-app-credentials(,|$)' <<<"$rows" || fail "${path}: Deployment/app does not use postgres-app-credentials"
+            grep -qP '^CronJob/index\t.*[\t,]postgres-indexer-credentials(,|$)' <<<"$rows" || fail "${path}: CronJob/index does not use postgres-indexer-credentials"
+            # glibc arenas (app ADR 0001): part of the measured memory budget.
+            for w in 'Deployment app .spec.template.spec' 'CronJob index .spec.jobTemplate.spec.template.spec'; do
+              read -r kind name spec <<<"$w"
+              [ "$(yq "select(.kind == \"${kind}\" and .metadata.name == \"${name}\") | ${spec}.containers[0].env[] | select(.name == \"MALLOC_ARENA_MAX\") | .value" <<<"$out")" = "2" ] || fail "${path}: ${kind}/${name} must set MALLOC_ARENA_MAX=2"
+            done
+
+            # No surge pods: a rollout or a second Job would be refused by the full quota.
+            while read -r name replicas strategy; do
+              [ -n "$name" ] || continue
+              [ "$replicas" = "1" ] || fail "${path}: Deployment/${name} must run 1 replica"
+              [ "$strategy" = "Recreate" ] || fail "${path}: Deployment/${name} must use strategy Recreate"
+            done < <(yq -N 'select(.kind == "Deployment") | .metadata.name + " " + (.spec.replicas // 1 | tostring) + " " + (.spec.strategy.type // "RollingUpdate")' <<<"$out")
+            while read -r name policy; do
+              [ -n "$name" ] || continue
+              [ "$policy" = "Forbid" ] || fail "${path}: CronJob/${name} must use concurrencyPolicy Forbid"
+            done < <(yq -N 'select(.kind == "CronJob") | .metadata.name + " " + (.spec.concurrencyPolicy // "Allow")' <<<"$out")
+
+            # The Ingress is the only way in.
+            exposed=$(yq -N 'select(.kind == "Service" and (.spec.type == "LoadBalancer" or .spec.type == "NodePort")) | .metadata.name' <<<"$out")
+            [ -z "$exposed" ] || fail "${path}: Service bypasses the Ingress: ${exposed}"
+
+            # The Secrets, sealed with strict scope into this namespace.
+            for pair in postgres-credentials=username,password postgres-indexer-credentials=username,password postgres-app-credentials=username,password groq-api-key=GROQ_API_KEY; do
+              name="${pair%%=*}"
+              sealed=$(yq "select(.kind == \"SealedSecret\" and .metadata.name == \"${name}\")" <<<"$out")
+              [ -n "$sealed" ] || fail "${path}: no SealedSecret ${name}"
+              [ "$(yq '.metadata.namespace' <<<"$sealed")" = "$ns" ] || fail "${path}: SealedSecret ${name} is not in namespace ${ns}"
+              if grep -qE 'sealedsecrets\.bitnami\.com/(cluster|namespace)-wide: "?true' <<<"$sealed"; then
+                fail "${path}: ${name} must be sealed with --scope strict"
+              fi
+              keys="${pair#*=}"
+              for k in ${keys//,/ }; do
+                [ -n "$(yq ".spec.encryptedData[\"${k}\"] // \"\"" <<<"$sealed")" ] || fail "${path}: SealedSecret ${name} has no key ${k}"
+              done
+            done
+            echo "ok"
+            echo "::endgroup::"
+          done
+
+      # ADR 0020 and 0025: ask.sandeeprn.in. Same edge rules as the link
+      # shortener's host (production issuer, DNS only, HSTS pinned, no
+      # defaultBackend, every host covered by TLS, every path to the app), plus:
+      # /ask has its own Ingress with the tight per-client limit and the body
+      # cap, every other Ingress has the general limit, and exactly one Ingress
+      # asks cert-manager for the certificate that all of them share.
+      - name: Assert oncall-assistant Ingress and rate limits (ADR 0025)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+          apps=()
+          for app in argocd/clusters/*/apps/*.yaml; do
+            [ "$(yq 'select(.kind == "Application") | .spec.project' "$app")" = "oncall" ] && apps+=("$app")
+          done
+          [ ${#apps[@]} -gt 0 ] || fail "no Application in project oncall"
+          for app in "${apps[@]}"; do
+            path=$(yq '.spec.source.path' "$app")
+            echo "::group::${path}"
+            out=$(kubectl kustomize "$path")
+            # -N: no "---" lines between results from different documents.
+            names=$(yq -N 'select(.kind == "Ingress") | .metadata.name' <<<"$out")
+            [ -n "$names" ] || fail "${path}: no Ingress"
+            mw() { yq "select(.kind == \"Middleware\" and .metadata.name == \"$1\")" <<<"$out"; }
+            ref() { echo "$(yq '.metadata.namespace' <<<"$(mw "$1")")-$1@kubernetescrd"; }
+            for m in rate-limit ask-rate-limit ask-body-limit hsts; do
+              [ -n "$(mw "$m")" ] || fail "${path}: no ${m} Middleware"
+            done
+            [ "$(yq '.spec.rateLimit.average // 0' <<<"$(mw rate-limit)")" -gt 0 ] || fail "${path}: rate-limit has no average"
+            [ "$(yq '.spec.rateLimit.burst // 0' <<<"$(mw rate-limit)")" -gt 0 ] || fail "${path}: rate-limit has no burst"
+            # Pinned: each live answer spends the shared free tier (about 3 a
+            # minute for everyone). Loosening it is a decision, not a typo.
+            ask=$(mw ask-rate-limit)
+            [ "$(yq '.spec.rateLimit.average' <<<"$ask")/$(yq '.spec.rateLimit.period' <<<"$ask")/$(yq '.spec.rateLimit.burst' <<<"$ask")" = "2/1m/3" ] || fail "${path}: ask-rate-limit must be average 2, period 1m, burst 3"
+            body=$(yq '.spec.buffering.maxRequestBodyBytes // 0' <<<"$(mw ask-body-limit)")
+            [ "$body" -gt 0 ] && [ "$body" -le 65536 ] || fail "${path}: ask-body-limit must cap the body (0 < maxRequestBodyBytes <= 65536)"
+            hsts=$(mw hsts)
+            [ "$(yq '.spec.headers.stsSeconds' <<<"$hsts")" = "15552000" ] || fail "${path}: hsts max-age is not 15552000 (180 days)"
+            [ "$(yq '.spec.headers.stsIncludeSubdomains // false' <<<"$hsts")" = "false" ] || fail "${path}: hsts must not include subdomains"
+            [ "$(yq '.spec.headers.stsPreload // false' <<<"$hsts")" = "false" ] || fail "${path}: hsts must not ask for preload"
+
+            issuers=0; ask_routes=0; secrets=""
+            for name in $names; do
+              ing="select(.kind == \"Ingress\" and .metadata.name == \"${name}\")"
+              a() { yq "${ing} | .metadata.annotations[\"$1\"] // \"\"" <<<"$out"; }
+              has_mw() { tr ',' '\n' <<<"$(a traefik.ingress.kubernetes.io/router.middlewares)" | tr -d ' ' | grep -qFx -- "$(ref "$1")"; }
+              [ "$(yq "${ing} | .spec.ingressClassName" <<<"$out")" = "traefik" ] || fail "${name}: ingressClassName is not traefik"
+              [ "$(a traefik.ingress.kubernetes.io/router.entrypoints)" = "websecure" ] || fail "${name}: must use the websecure entrypoint only"
+              [ "$(a external-dns.alpha.kubernetes.io/cloudflare-proxied)" = "false" ] || fail "${name}: must be DNS only (cloudflare-proxied \"false\")"
+              has_mw hsts || fail "${name}: hsts Middleware is not attached"
+              [ "$(yq "${ing} | .spec.rules | length" <<<"$out")" -gt 0 ] || fail "${name}: no rules"
+              [ "$(yq "${ing} | .spec | has(\"defaultBackend\")" <<<"$out")" = "false" ] || fail "${name}: defaultBackend bypasses the host rules"
+              for host in $(yq "${ing} | .spec.rules[].host" <<<"$out"); do
+                s=$(yq "${ing} | .spec.tls[]? | select(.hosts[]? == \"${host}\") | .secretName" <<<"$out")
+                [ -n "$s" ] || fail "${name}: ${host} has no TLS Secret"
+                secrets+="${s}"$'\n'
+              done
+              [ -z "$(yq "${ing} | .spec.rules[].http.paths[] | select(.backend.service.name != \"app\") | .path" <<<"$out")" ] || fail "${name}: a path does not go to the app Service"
+              issuer=$(a cert-manager.io/cluster-issuer)
+              if [ -n "$issuer" ]; then
+                [ "$issuer" = "letsencrypt-production" ] || fail "${name}: not issued by letsencrypt-production"
+                issuers=$((issuers + 1))
+              fi
+              # An Ingress that routes /ask carries the tight limit and the body
+              # cap, and routes nothing else (its limit would starve the page).
+              paths=$(yq "${ing} | .spec.rules[].http.paths[] | .path + \" \" + .pathType" <<<"$out")
+              if grep -q '^/ask ' <<<"$paths"; then
+                [ "$paths" = "/ask Exact" ] || fail "${name}: the /ask Ingress must route only /ask (Exact), got: ${paths//$'\n'/; }"
+                has_mw ask-rate-limit || fail "${name}: ask-rate-limit is not attached"
+                has_mw ask-body-limit || fail "${name}: ask-body-limit is not attached"
+                ask_routes=$((ask_routes + 1))
+              else
+                has_mw rate-limit || fail "${name}: rate-limit is not attached"
+              fi
+            done
+            [ "$ask_routes" -ge 1 ] || fail "${path}: no Ingress routes /ask, so it would fall through to the general limit"
+            [ "$issuers" -eq 1 ] || fail "${path}: exactly one Ingress may carry cert-manager.io/cluster-issuer (found ${issuers}); two would fight over one Secret"
+            [ "$(sort -u <<<"${secrets%$'\n'}" | wc -l)" -eq 1 ] || fail "${path}: all Ingresses must share one TLS Secret"
+            echo "ok"
+            echo "::endgroup::"
+          done
 
       # ADR 0020: in every deployed link-shortener overlay, the backend reads its
       # link-creation tokens from the link-tokens Secret, mounted whole (a

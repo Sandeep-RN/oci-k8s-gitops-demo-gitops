@@ -1,0 +1,118 @@
+# Postgres with pgvector for the passage index (ADR 0025). The database is a
+# CACHE: everything in it is rebuilt by the index CronJob from public documents,
+# so there is no backup CronJob and no Object Storage. Losing the volume costs
+# one index run (about 7 to 12 minutes on the node), nothing else.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  # One replica: no failover target on a single node, and nothing to protect
+  # that a re-index cannot rebuild.
+  replicas: 1
+  serviceName: postgres
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: oncall-assistant
+    spec:
+      # Below the link shortener; never preempts (ADR 0025, platform-owned).
+      priorityClassName: oncall-assistant-low
+      automountServiceAccountToken: false
+      # Long enough for a clean "smart" shutdown and checkpoint.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        # UID/GID 999 is "postgres" in the Debian-based pgvector image (the link
+        # shortener's Alpine image uses 70). The entrypoint works without root
+        # when the data directory is writable by this user.
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999 # makes the fresh volume group-writable for initdb
+        fsGroupChangePolicy: OnRootMismatch # skip the recursive chown on every start
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          # pgvector 0.8.7 on Postgres 18 (Debian bookworm), pinned by the
+          # multi-arch index digest (it has linux/arm64; checked in demo #193).
+          # The version tag is for humans; the digest is what is pulled. Bump
+          # both together, deliberately. The role Job uses the same image.
+          image: docker.io/pgvector/pgvector:0.8.7-pg18@sha256:38681dc6eaf55308e2a4c6de392d131652dcfac70e1263e35cd9b5ea3fe39782
+          # Sized for a 256Mi limit and a few megabytes of data: the default
+          # shared_buffers (128MB) would be half the limit. Three clients at most
+          # (app pool 2, one index run, one role Job), so 20 connections is plenty.
+          args: ["-c", "shared_buffers=64MB", "-c", "max_connections=20"]
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            # The admin (superuser). Only this pod and the role Job hold it.
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: username }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: password }
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef: { name: app-config, key: PGDATABASE }
+            # Only used on first start (initdb). Changing the Secret later does
+            # NOT change the password inside an existing database; see
+            # scripts/seal-oncall-secrets.sh for how to rotate it.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # ADR 0025 budget line: memory request = limit; CPU request below the
+          # limit keeps the pod Burstable. The namespace sums are asserted in CI.
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+          # pg_isready over TCP: checks the server accepts connections, without a password.
+          startupProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 5
+            failureThreshold: 60 # first start runs initdb; allow up to 5 min
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6 # 2 min: never kill Postgres for a brief stall
+          volumeMounts:
+            # Postgres 18 images keep PGDATA at /var/lib/postgresql/18/docker and
+            # expect the volume at /var/lib/postgresql (not .../data as in <= 17).
+            - name: data
+              mountPath: /var/lib/postgresql
+            # Writable scratch space, needed because the root filesystem is read-only.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  # Storage class is set per cluster in the overlay.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # The index is about 10 MB at 285 passages (measured 2026-11-22).
+            storage: 1Gi

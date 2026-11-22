@@ -1,0 +1,40 @@
+# The on-call assistant tenant's own Application (ADR 0025): app, Postgres with
+# pgvector, index CronJob, Ingress for ask.sandeeprn.in. Project "oncall" may
+# deploy only into the oncall-assistant namespace and may not create the
+# quota, LimitRange or PriorityClass that cap it (platform-owned, deployed by
+# oncall-assistant-guardrails in wave 0).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: oncall-assistant
+  namespace: argocd
+  annotations:
+    # After the guardrails (wave 0): pods must start only once the quota and
+    # the LimitRange defaults exist.
+    argocd.argoproj.io/sync-wave: "1"
+  # Deleting this Application also deletes what it deployed. Safe here: the
+  # database is a cache (ADR 0025), and the Namespace with its quota belongs to
+  # the guardrails Application, which keeps it.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: oncall
+  source:
+    repoURL: https://github.com/Sandeep-RN/oci-k8s-gitops-demo-gitops.git
+    targetRevision: main
+    path: apps/oncall-assistant/overlays/k3s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: oncall-assistant
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # A first sync can race the Sealed Secrets controller or the guardrails;
+    # retrying lets it succeed once they are in place.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

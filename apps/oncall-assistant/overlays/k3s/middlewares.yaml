@@ -1,0 +1,63 @@
+# Traefik middlewares for ask.sandeeprn.in (ingress.yaml).
+#
+# Per client: Traefik's Service uses externalTrafficPolicy Local (ADR 0022), so
+# the source address is the visitor's real one and each gets its own bucket.
+# Buckets live in memory in the single Traefik pod. Visitors behind one NAT
+# share a bucket; IPv6 clients can rotate within their /64. These limits stop
+# one noisy client, not a distributed flood.
+
+# Everything except /ask: the same per-client values as demo.sandeeprn.in
+# (ADR 0020). A page load is a handful of requests.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: oncall-assistant
+spec:
+  rateLimit:
+    average: 20
+    period: 1s
+    burst: 40
+---
+# POST /ask: each live answer spends the provider's free tier, which allows
+# about 3 answers a minute for all visitors together (Groq, ~2-2.5K tokens per
+# answer against 8K tokens a minute). 2 a minute per client, with a burst of 3
+# so a short follow-up is not refused. A refused request gets 429 from Traefik
+# and never reaches the app. This does NOT protect the shared provider limit:
+# the app's daily budget and saved answers do that (app issue #6), and the
+# app's page must show a 429 as "slow down".
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ask-rate-limit
+  namespace: oncall-assistant
+spec:
+  rateLimit:
+    average: 2
+    period: 1m
+    burst: 3
+---
+# A question is at most 500 characters (the app validates that), so a 4 KB body
+# is generous. Anything larger gets 413 at Traefik before the app reads it.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ask-body-limit
+  namespace: oncall-assistant
+spec:
+  buffering:
+    maxRequestBodyBytes: 4096
+---
+# HTTP Strict Transport Security, same settings as demo.sandeeprn.in (ADR 0020,
+# demo #90): this host only, no preload, 180 days. Hard to reverse: a browser
+# that has seen it uses HTTPS only for this host until max-age runs out.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: hsts
+  namespace: oncall-assistant
+spec:
+  headers:
+    stsSeconds: 15552000
+    stsIncludeSubdomains: false
+    stsPreload: false
