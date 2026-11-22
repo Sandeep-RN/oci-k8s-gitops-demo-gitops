@@ -10,6 +10,10 @@ resources:
   - postgres-indexer-credentials-sealedsecret.yaml  # index CronJob
   - postgres-app-credentials-sealedsecret.yaml      # app, read-only
   - groq-api-key-sealedsecret.yaml                  # the public demo's LLM provider
+  # Hashes of the demo tokens, one key per token (ADR 0003). Add or rotate with
+  # scripts/seal-demo-tokens.sh; revoke by deleting the key. The token itself is
+  # never stored here.
+  - demo-tokens-sealedsecret.yaml                   # app: lifts the public share of the budget
   # https://ask.sandeeprn.in via k3s's Traefik: two Ingresses for one host, so
   # /ask gets its own, much tighter rate limit (see ingress.yaml).
   - ingress.yaml
