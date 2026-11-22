@@ -7,7 +7,11 @@
 #   client --TLS--> Traefik -+- Path   /ask  [ask-rate-limit][ask-body-limit][hsts] -> app
 #                            +- Prefix /     [rate-limit][hsts]                    -> app
 #
-# Traefik tries the longer rule first, so /ask never falls through to "/".
+# Router order: Traefik ranks routers by the LENGTH of their rule unless a
+# priority is set, and Host(...) && PathPrefix(`/`) is 3 characters longer than
+# Host(...) && Path(`/ask`). Without the explicit priority on "ask" below, the
+# "/" router took /ask too, with neither the tight limit nor the body cap
+# (found live on 2026-11-22: 5 x 422, no 429). CI requires the priority.
 #
 # Only "app" carries the cert-manager annotation: two Ingresses asking for the
 # same Secret would make two Certificates fight over it. "ask" names the same
@@ -58,6 +62,9 @@ metadata:
     # No cert-manager annotation on purpose: the certificate comes from the
     # "app" Ingress above (same Secret).
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # Above any rule length on this host, so /ask is matched here and never by
+    # the "/" router (see the header). Higher number = tried first.
+    traefik.ingress.kubernetes.io/router.priority: "100"
     # The provider allows about 3 live answers a minute for EVERYONE together;
     # the per-client limit keeps one visitor from taking all of them. Then the
     # body cap, then HSTS.

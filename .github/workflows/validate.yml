@@ -536,9 +536,15 @@ jobs:
                 [ "$paths" = "/ask Exact" ] || fail "${name}: the /ask Ingress must route only /ask (Exact), got: ${paths//$'\n'/; }"
                 has_mw ask-rate-limit || fail "${name}: ask-rate-limit is not attached"
                 has_mw ask-body-limit || fail "${name}: ask-body-limit is not attached"
+                # Traefik ranks routers by rule length unless a priority is set,
+                # and PathPrefix(`/`) is longer than Path(`/ask`): without this
+                # the "/" router serves /ask with neither middleware (demo #195).
+                prio=$(a traefik.ingress.kubernetes.io/router.priority)
+                [[ "$prio" =~ ^[0-9]+$ ]] && [ "$prio" -ge 100 ] || fail "${name}: the /ask Ingress needs traefik.ingress.kubernetes.io/router.priority >= 100, or the \"/\" router (a longer rule) takes /ask"
                 ask_routes=$((ask_routes + 1))
               else
                 has_mw rate-limit || fail "${name}: rate-limit is not attached"
+                [ -z "$(a traefik.ingress.kubernetes.io/router.priority)" ] || fail "${name}: only the /ask Ingress may set a router priority"
               fi
             done
             [ "$ask_routes" -ge 1 ] || fail "${path}: no Ingress routes /ask, so it would fall through to the general limit"
