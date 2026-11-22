@@ -3,8 +3,10 @@
 # matter how the tenant misbehaves, so it lives here (platform-owned) and the
 # tenant's AppProject may not touch it.
 #
-# The planned pods add up to exactly the cap at peak (app 384Mi + Postgres
-# 256Mi + indexing Job 384Mi = 1024Mi), so there is NO headroom: a pod that is
+# The planned pods add up to exactly the cap at peak (app 320Mi + Postgres
+# 256Mi + index Job 384Mi + DB role Job 64Mi = 1024Mi; CPU limits 300m + 200m +
+# 450m + 50m = 1; tuned in demo #195 from measured peaks, and CI checks the
+# sums against this file), so there is NO headroom: a pod that is
 # not in the plan, or a Job that starts while a terminating pod still counts,
 # is refused with "exceeded quota". That is the intent (a refusal beats an OOM
 # on the shared node), and it is why the app uses strategy Recreate and the

@@ -1,0 +1,13 @@
+# ClusterIP only: the Ingress is the only way in (CI rejects a LoadBalancer or
+# NodePort Service here, which would skip TLS, HSTS and the rate limits).
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+spec:
+  selector:
+    app.kubernetes.io/name: app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

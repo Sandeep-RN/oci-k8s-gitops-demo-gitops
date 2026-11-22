@@ -1,0 +1,82 @@
+# The public entry point: https://ask.sandeeprn.in through k3s's built-in
+# Traefik, the same edge as demo.sandeeprn.in (ADR 0020, 0022, 0025).
+#
+# Two Ingresses for one host, because Traefik attaches middlewares to a whole
+# Ingress and /ask needs a far tighter limit than the rest:
+#
+#   client --TLS--> Traefik -+- Path   /ask  [ask-rate-limit][ask-body-limit][hsts] -> app
+#                            +- Prefix /     [rate-limit][hsts]                    -> app
+#
+# Traefik tries the longer rule first, so /ask never falls through to "/".
+#
+# Only "app" carries the cert-manager annotation: two Ingresses asking for the
+# same Secret would make two Certificates fight over it. "ask" names the same
+# TLS Secret without the annotation, and Traefik serves it for both.
+# external-dns sees the same host and address on both and writes one A record.
+#
+# Namespaces are explicit: overlay resources do not get the base's namespace.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app
+  namespace: oncall-assistant
+  annotations:
+    # Production only: CI rejects any other issuer, because HSTS on an
+    # untrusted certificate locks visitors out (demo #90). cert-manager renews
+    # 30 days before expiry.
+    cert-manager.io/cluster-issuer: letsencrypt-production
+    # HTTPS only. Plain HTTP is redirected to HTTPS at Traefik's entrypoint.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # Rate limit first, so rejected requests cost nothing more; then HSTS.
+    traefik.ingress.kubernetes.io/router.middlewares: oncall-assistant-rate-limit@kubernetescrd,oncall-assistant-hsts@kubernetescrd
+    # DNS only: Cloudflare's proxy would end TLS at Cloudflare (ADR 0020).
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "false"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - ask.sandeeprn.in
+      secretName: ask-sandeeprn-in-tls
+  rules:
+    - host: ask.sandeeprn.in
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ask
+  namespace: oncall-assistant
+  annotations:
+    # No cert-manager annotation on purpose: the certificate comes from the
+    # "app" Ingress above (same Secret).
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # The provider allows about 3 live answers a minute for EVERYONE together;
+    # the per-client limit keeps one visitor from taking all of them. Then the
+    # body cap, then HSTS.
+    traefik.ingress.kubernetes.io/router.middlewares: oncall-assistant-ask-rate-limit@kubernetescrd,oncall-assistant-ask-body-limit@kubernetescrd,oncall-assistant-hsts@kubernetescrd
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "false"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - ask.sandeeprn.in
+      secretName: ask-sandeeprn-in-tls
+  rules:
+    - host: ask.sandeeprn.in
+      http:
+        paths:
+          - path: /ask
+            pathType: Exact
+            backend:
+              service:
+                name: app
+                port:
+                  name: http

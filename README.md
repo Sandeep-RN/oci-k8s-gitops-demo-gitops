@@ -39,6 +39,11 @@ apps/<name>/base               Kustomize base: Deployment, Services, PDB, Postgr
 apps/<name>/overlays/k3s       Live cluster (ADR 0022): the Ingress for demo.sandeeprn.in, the HSTS
                                and rate-limit middlewares (per client, 20/s burst 40) and the k3s
                                storage settings
+apps/oncall-assistant/         The on-call assistant tenant (ADR 0025): app, Postgres with pgvector
+                               (a cache, no backup), DB role Job, nightly index CronJob; overlays/k3s
+                               has ask.sandeeprn.in (/ask: 2/min per client) and the SealedSecrets.
+                               Its cap (namespace, quota, LimitRange, PriorityClass) lives in
+                               platform/oncall-assistant-guardrails, which the tenant cannot change
 argocd/install                 ArgoCD, pinned upstream install (ArgoCD manages itself from here)
 argocd/clusters/<cluster>/     root.yaml (app of apps) + apps/ (AppProject, Applications)
 edge/<component>/              Helm values for cert-manager and external-dns (ADR 0020);
@@ -50,8 +55,9 @@ platform/<addon>/              cluster add-ons and their sealed tokens (sealed-s
 monitoring/kube-prometheus-stack/  Helm values (shared + per cluster); chart pinned in the cluster's monitoring app
 monitoring/blackbox-exporter   Helm values for the blackbox exporter used by the redirect probe
 monitoring/<cluster>/          objects the chart does not create (Grafana admin and Discord webhook SealedSecrets)
-scripts/                       seal-link-tokens.sh, seal-cloudflare-token.sh and
-                               seal-traefik-public-ip.sh (sealing needs no cluster access)
+scripts/                       seal-link-tokens.sh, seal-cloudflare-token.sh,
+                               seal-traefik-public-ip.sh and seal-oncall-secrets.sh (sealing
+                               needs no cluster access)
 tests/prometheus/              promtool unit tests for the alert rules (run in CI)
 .github/workflows/             validate (kubeconform, Helm render, promtool, amtool), gitleaks
 ```
@@ -99,6 +105,14 @@ with `scripts/seal-link-tokens.sh NAME...` (hidden prompt; values live in the
 password manager); revoke by deleting the key (see the script header). Anything
 that creates links (the demo repo's verify script) reads its token from the
 `LINK_TOKEN` environment variable, never from a repo. A k6 load job is not built.
+
+**On-call assistant** (ADR 0025): four SealedSecrets in
+`apps/oncall-assistant/overlays/k3s`: the Groq API key and three database
+roles (admin, indexer, read-only app). `scripts/seal-oncall-secrets.sh`
+creates the missing ones: it asks only for the Groq key (hidden prompt) and
+generates the database passwords, which are never shown or stored (the
+database is a cache). Re-seal one by name to rotate it; the admin password
+is the exception, see the script header.
 
 **Cloudflare tokens** (ADR 0020): cert-manager and external-dns each have
 their own token (Zone:DNS:Edit and Zone:Zone:Read on `sandeeprn.in` only).

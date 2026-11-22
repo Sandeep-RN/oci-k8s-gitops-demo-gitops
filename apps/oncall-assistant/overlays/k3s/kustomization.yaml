@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# The live single-node k3s cluster (ADR 0022, ADR 0025).
+resources:
+  - ../../base
+  # Sealed with this cluster's certificate, strict scope (name + namespace).
+  # Create or rotate with scripts/seal-oncall-secrets.sh (see its header: the
+  # admin password cannot be rotated by re-sealing alone).
+  - postgres-credentials-sealedsecret.yaml          # admin (superuser)
+  - postgres-indexer-credentials-sealedsecret.yaml  # index CronJob
+  - postgres-app-credentials-sealedsecret.yaml      # app, read-only
+  - groq-api-key-sealedsecret.yaml                  # the public demo's LLM provider
+  # https://ask.sandeeprn.in via k3s's Traefik: two Ingresses for one host, so
+  # /ask gets its own, much tighter rate limit (see ingress.yaml).
+  - ingress.yaml
+  - middlewares.yaml
+patches:
+  # k3s's default StorageClass, named explicitly so a changed default cannot
+  # move the volume. local-path is a directory on the node's boot disk and does
+  # NOT enforce the size; the index is about 10 MB. The database is a cache
+  # (ADR 0025): losing the volume costs one index run.
+  # volumeClaimTemplates are immutable: get this right before the first sync.
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: add
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: local-path

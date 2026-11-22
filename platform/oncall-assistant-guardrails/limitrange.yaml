@@ -20,7 +20,7 @@ spec:
       defaultRequest:
         memory: 256Mi
         cpu: 100m
-      # The largest budget lines (app and indexing Job, 384Mi) and the whole
+      # The largest budget line (the index Job, 384Mi) and the whole
       # namespace's CPU. One container cannot claim the entire cap.
       max:
         memory: 384Mi

@@ -1,0 +1,103 @@
+# The nightly index run (ADR 0025): fetches the public docs of the project's
+# repos at their current heads, embeds new or changed files only, and swaps the
+# index in one transaction (readers keep the old index until it commits).
+#
+# The database starts empty, so the first run is started on demand after the
+# first sync (read-only otherwise; no kubectl apply):
+#   kubectl -n oncall-assistant create job --from=cronjob/index index-first-$(date +%m%d)
+# Measured 2026-11-22 (x86, demo #195): a full first run is 182 s of CPU, so
+# about 7 to 12 minutes at this Job's 450m on the arm64 node; a run with
+# nothing changed takes seconds. Demo #196 measures the real pod.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: index
+  annotations:
+    # After the oncall-db-roles Job (wave 1), which creates the indexer role.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # 04:30 IST: clear of the link shortener's 03:00 IST backup.
+  schedule: "30 4 * * *"
+  timeZone: Asia/Kolkata
+  # Never two runs at once (ADR 0025): the quota has room for exactly one index
+  # pod, and the app's advisory lock would make a second one exit anyway.
+  concurrencyPolicy: Forbid
+  # A missed run (controller down) still starts within an hour.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      # Generous next to the 7 to 12 minute first run; a hung fetch ends here.
+      activeDeadlineSeconds: 2400
+      # Also removes Jobs started by hand from this template, which the
+      # history limits above do not count.
+      ttlSecondsAfterFinished: 86400
+      # Exit 2 = another run holds the index lock: retrying cannot help.
+      podFailurePolicy:
+        rules:
+          - action: FailJob
+            onExitCodes:
+              containerName: index
+              operator: In
+              values: [2]
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: index
+            app.kubernetes.io/part-of: oncall-assistant
+        spec:
+          priorityClassName: oncall-assistant-low
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001 # matches the numeric UID in the app's Dockerfile
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: index
+              # Same image as the app (kustomize sets the tag), so the index
+              # always matches the model the app queries with.
+              image: ghcr.io/sandeep-rn/oncall-assistant
+              command: ["python", "-m", "app.index"]
+              envFrom:
+                - configMapRef:
+                    name: app-config
+              env:
+                # The indexer role: owns the tables, not a superuser (sql/roles.sql).
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef: { name: postgres-indexer-credentials, key: username }
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: postgres-indexer-credentials, key: password }
+                # See the app Deployment; measured peak 247 -> 227 MiB (app ADR 0001).
+                - name: MALLOC_ARENA_MAX
+                  value: "2"
+                # Repo tarballs are streamed to a temp file, not held in memory.
+                - name: TMPDIR
+                  value: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              # ADR 0025 budget line. Measured 2026-11-22 (x86, demo #195): cgroup
+              # peak 272 MiB for a full first run at a 320Mi limit, so 384Mi
+              # leaves ~30%. CPU is the larger share of the cap: the app idles
+              # while this runs at night.
+              resources:
+                requests: { cpu: 100m, memory: 384Mi }
+                limits: { cpu: 450m, memory: 384Mi }
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            # On disk, not in memory (a memory-backed emptyDir would count
+            # against the 384Mi limit).
+            - name: tmp
+              emptyDir:
+                sizeLimit: 512Mi
