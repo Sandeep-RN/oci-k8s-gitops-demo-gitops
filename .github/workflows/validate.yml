@@ -416,6 +416,7 @@ jobs:
                   postgres-indexer-credentials=CronJob/index | postgres-indexer-credentials=Job/oncall-db-roles) ;;
                   postgres-app-credentials=Deployment/app | postgres-app-credentials=Job/oncall-db-roles) ;;
                   groq-api-key=Deployment/app) ;;
+                  demo-tokens=Deployment/app) ;;
                   *) fail "${where}: ${id} must not reference Secret ${s}" ;;
                 esac
               done
@@ -465,6 +466,79 @@ jobs:
             echo "ok"
             echo "::endgroup::"
           done
+
+      # ADR 0003: the daily LLM budget's settings and the demo tokens (demo #207,
+      # app issue #6). The settings are integers the app can parse. Demo tokens
+      # reach ONLY the app, as an OPTIONAL read-only mount (the app has to start
+      # before the first token is sealed), holding hashes, never tokens. When the
+      # demo-tokens SealedSecret exists it is strict-scoped to this namespace and
+      # every key is a valid token name (the name is logged and is a file name).
+      - name: Assert oncall-assistant budget settings and demo tokens (ADR 0003)
+        run: |
+          set -euo pipefail
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+          ns=oncall-assistant
+          apps=()
+          for app in argocd/clusters/*/apps/*.yaml; do
+            [ "$(yq 'select(.kind == "Application") | .spec.project' "$app")" = "oncall" ] && apps+=("$app")
+          done
+          [ ${#apps[@]} -gt 0 ] || fail "no Application in project oncall"
+          for app in "${apps[@]}"; do
+            path=$(yq '.spec.source.path' "$app")
+            echo "::group::${path}"
+            out=$(kubectl kustomize "$path")
+
+            cm='select(.kind == "ConfigMap" and .metadata.name == "app-config") | .data'
+            total=$(yq "${cm}.DAILY_TOKENS_TOTAL // \"\"" <<<"$out")
+            pct=$(yq "${cm}.PUBLIC_SHARE_PCT // \"\"" <<<"$out")
+            [[ "$total" =~ ^[1-9][0-9]*$ ]] || fail "${path}: app-config DAILY_TOKENS_TOTAL must be a positive integer, got '${total}'"
+            { [[ "$pct" =~ ^[0-9]+$ ]] && [ "$pct" -ge 1 ] && [ "$pct" -le 100 ]; } || fail "${path}: app-config PUBLIC_SHARE_PCT must be an integer from 1 to 100, got '${pct}'"
+
+            dep='select(.kind == "Deployment" and .metadata.name == "app") | .spec.template.spec'
+            vol="${dep}.volumes[] | select(.name == \"demo-tokens\")"
+            [ "$(yq "${vol} | .secret.secretName" <<<"$out")" = "demo-tokens" ] || fail "${path}: Deployment/app must mount Secret demo-tokens as volume demo-tokens"
+            [ "$(yq "${vol} | .secret.optional" <<<"$out")" = "true" ] || fail "${path}: the demo-tokens volume must be optional: the app has to start before the first token is sealed"
+            # 0440, rendered in decimal; fsGroup lets the app user read it.
+            [ "$(yq "${vol} | .secret.defaultMode" <<<"$out")" = "288" ] || fail "${path}: the demo-tokens volume must have defaultMode 0440"
+            [ "$(yq "${dep}.securityContext.fsGroup" <<<"$out")" = "10001" ] || fail "${path}: Deployment/app needs fsGroup 10001 to read the 0440 token files"
+            mount=$(yq "${dep}.containers[0].volumeMounts[] | select(.name == \"demo-tokens\") | .mountPath + \" \" + (.readOnly | tostring)" <<<"$out")
+            [ "$mount" = "/run/demo-tokens true" ] || fail "${path}: demo-tokens must be mounted read-only at /run/demo-tokens, got '${mount}'"
+            [ "$(yq "${dep}.containers[0].env[] | select(.name == \"DEMO_TOKEN_DIR\") | .value" <<<"$out")" = "/run/demo-tokens" ] || fail "${path}: DEMO_TOKEN_DIR must point at the mount, /run/demo-tokens"
+
+            # Only the app may reference demo-tokens (the workloads step enforces
+            # which workload may hold which Secret); here: not through env vars.
+            # Real values, not a string literal: yq prints a literal once per
+            # document even when nothing matched. Captured first, so a grep that
+            # stops early cannot turn into a SIGPIPE failure under pipefail.
+            envrefs=$(yq -N '.. | select(tag == "!!map") | (.secretKeyRef.name, .secretRef.name)' <<<"$out")
+            if grep -q '^demo-tokens$' <<<"$envrefs"; then
+              fail "${path}: demo-tokens must be mounted as files, not read through env vars (they would show in the process environment)"
+            fi
+
+            sealed=$(yq 'select(.kind == "SealedSecret" and .metadata.name == "demo-tokens")' <<<"$out")
+            if [ -z "$sealed" ]; then
+              echo "no demo tokens sealed yet: only the public budget exists"
+            else
+              [ "$(yq '.metadata.namespace' <<<"$sealed")" = "$ns" ] || fail "${path}: SealedSecret demo-tokens is not in namespace ${ns}"
+              if grep -qE 'sealedsecrets\.bitnami\.com/(cluster|namespace)-wide: "?true' <<<"$sealed"; then
+                fail "${path}: demo-tokens must be sealed with --scope strict"
+              fi
+              keys=$(yq '.spec.encryptedData | keys | .[]' <<<"$sealed")
+              [ -n "$keys" ] || fail "${path}: SealedSecret demo-tokens has no tokens"
+              while read -r k; do
+                [[ "$k" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || fail "${path}: demo token name '${k}' must be lowercase letters, digits and '-', 1 to 31 characters"
+              done <<<"$keys"
+              echo "demo tokens sealed: $(wc -l <<<"$keys")"
+            fi
+            echo "ok"
+            echo "::endgroup::"
+          done
+
+      # ADR 0003: the assistant's role SQL, run on the SAME pgvector image the
+      # cluster uses (read from the role Job): what each role may do is proved by
+      # trying it, twice over, not read off the SQL. About a minute.
+      - name: Test oncall-assistant role SQL on a real Postgres (ADR 0003)
+        run: scripts/test-oncall-roles.sh
 
       # ADR 0020 and 0025: ask.sandeeprn.in. Same edge rules as the link
       # shortener's host (production issuer, DNS only, HSTS pinned, no

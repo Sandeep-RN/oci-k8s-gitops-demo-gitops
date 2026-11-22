@@ -33,6 +33,9 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001 # matches the numeric UID in the app's Dockerfile
         runAsGroup: 10001
+        # Group owner of the mounted demo-token files, so they can be 0440 (not
+        # world-readable) and the app user still reads them.
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -61,6 +64,10 @@ spec:
             # back; two arenas cut the peak (app ADR 0001) at no measurable cost.
             - name: MALLOC_ARENA_MAX
               value: "2"
+            # Where the demo-token hashes are mounted (volume below). With no
+            # files there, only the public budget exists.
+            - name: DEMO_TOKEN_DIR
+              value: /run/demo-tokens
           ports:
             - name: http
               containerPort: 8000
@@ -98,7 +105,22 @@ spec:
             # Writable scratch space, needed because the root filesystem is read-only.
             - name: tmp
               mountPath: /tmp
+            - name: demo-tokens
+              mountPath: /run/demo-tokens
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        # Named demo tokens (ADR 0003): one file per token, the file name is the
+        # token's name and its content the SHA-256 of the token, never the token
+        # itself. From the overlay's demo-tokens SealedSecret (scripts/
+        # seal-demo-tokens.sh). OPTIONAL: the app starts, and only the public
+        # budget exists, until the first token is sealed; the kubelet refreshes
+        # the files within about a minute of a token being added or revoked, with
+        # no restart (same pattern as the link shortener's tokens).
+        - name: demo-tokens
+          secret:
+            secretName: demo-tokens
+            optional: true
+            defaultMode: 0440
