@@ -1,0 +1,42 @@
+# Scrapes the Argo CD application controller so Prometheus has argocd_app_info
+# (one series per Application, with sync_status and health_status labels). The
+# demo site's live status strip reads it as counts only (demo #230, ADR 0026).
+#
+# Why here and not in argocd/install: that directory is the pinned upstream
+# install, and its ServiceMonitor CRD comes from the monitoring Application. A
+# ServiceMonitor in the Argo CD install could fail on a fresh bootstrap for the
+# missing CRD. This file is part of the monitoring Application, which skips the
+# missing-CRD dry run and retries (argocd/clusters/k3s/apps/monitoring.yaml).
+# Same reasoning as cert-manager-servicemonitor.yaml.
+#
+# The kustomization's `namespace: monitoring` puts this object in the
+# monitoring namespace; namespaceSelector below still finds the Service in argocd.
+#
+# The labels below are the Service's from the pinned upstream install. CI checks
+# them against the rendered install (validate.yml), so an Argo CD upgrade that
+# renames a label fails there and does not silently blank the status tile.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-metrics
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-metrics
+      app.kubernetes.io/component: metrics
+  namespaceSelector:
+    matchNames:
+      - argocd
+  endpoints:
+    - port: metrics
+      path: /metrics
+      # Sync state changes over minutes; the status page refreshes every 30 s.
+      interval: 30s
+      # Keep only what the status page reads. The controller also exports
+      # hundreds of Go, workqueue and per-app series that nothing here uses;
+      # dropping them keeps Prometheus's memory (about 485 MiB on a 12 GB node)
+      # from growing for no reason. Add names here when a panel needs them.
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: argocd_app_info
+          action: keep

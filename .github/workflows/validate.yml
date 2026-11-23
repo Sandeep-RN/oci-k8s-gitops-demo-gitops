@@ -259,6 +259,27 @@ jobs:
           done
           echo "ok"
 
+      # Demo #230: the demo site's status strip reads argocd_app_info. If an Argo CD
+      # upgrade renamed the metrics Service's labels or port, the ServiceMonitor
+      # would select nothing and the tile would go blank with CI still green.
+      - name: Assert the Argo CD scrape (demo #230)
+        run: |
+          set -euo pipefail
+          fail() { echo "FAIL: $*"; exit 1; }
+          out=$(kubectl kustomize monitoring/k3s)
+          sm='select(.kind == "ServiceMonitor" and .metadata.name == "argocd-metrics")'
+          [ -n "$(yq "${sm} | .metadata.name" <<<"$out")" ] || fail "monitoring/k3s: ServiceMonitor argocd-metrics is not rendered"
+          [ "$(yq "${sm} | .spec.namespaceSelector.matchNames[0]" <<<"$out")" = "argocd" ] || fail "argocd-metrics ServiceMonitor: namespaceSelector is not argocd"
+          [ "$(yq "${sm} | .spec.endpoints[0].metricRelabelings[0].regex" <<<"$out")" = "argocd_app_info" ] || fail "argocd-metrics ServiceMonitor: it must keep only argocd_app_info"
+          port=$(yq "${sm} | .spec.endpoints[0].port" <<<"$out")
+          argo=$(kubectl kustomize argocd/install)
+          svc='select(.kind == "Service" and .metadata.name == "argocd-metrics")'
+          while read -r k v; do
+            [ "$(yq "${svc} | .metadata.labels[\"${k}\"]" <<<"$argo")" = "$v" ] || fail "Service argocd-metrics has no label ${k}=${v}, which the ServiceMonitor selects"
+          done < <(yq "${sm} | .spec.selector.matchLabels | to_entries | .[] | .key + \" \" + .value" <<<"$out")
+          [ -n "$(yq "${svc} | .spec.ports[] | select(.name == \"${port}\") | .port" <<<"$argo")" ] || fail "Service argocd-metrics has no port named '${port}'"
+          echo "ok"
+
       # A broken Alertmanager config is silent (the operator rejects it and no
       # alert is sent), so check the rendered config and its routing here.
       - name: Check Alertmanager config (amtool)
