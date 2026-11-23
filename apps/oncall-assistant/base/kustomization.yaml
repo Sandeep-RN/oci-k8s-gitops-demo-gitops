@@ -24,4 +24,4 @@ configMapGenerator:
 # image runs the app and the index CronJob.
 images:
   - name: ghcr.io/sandeep-rn/oncall-assistant
-    newTag: a33978d5d5c8042e5d7856df6a6edb79947da665
+    newTag: bfcec0045fcfa77a83eadf156b644865aca7ef04
