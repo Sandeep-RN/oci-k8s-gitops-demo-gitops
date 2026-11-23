@@ -116,8 +116,9 @@ spec:
         # token's name and its content the SHA-256 of the token, never the token
         # itself. From the overlay's demo-tokens SealedSecret (scripts/
         # seal-demo-tokens.sh). OPTIONAL: the app starts, and only the public
-        # budget exists, until the first token is sealed; the kubelet refreshes
-        # the files within about a minute of a token being added or revoked, with
+        # budget exists, until the first token is sealed; once ArgoCD has synced a
+        # token being added or revoked (1 to 5 minutes after the merge, measured in
+        # demo #218), the kubelet refreshes the files within about a minute, with
         # no restart (same pattern as the link shortener's tokens).
         - name: demo-tokens
           secret:

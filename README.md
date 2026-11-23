@@ -124,8 +124,10 @@ of each token: all hashes are keys of one SealedSecret, `demo-tokens`, mounted
 into the app as one optional file per token (the app starts before the first one
 exists). Generate a token (`openssl rand -hex 32`), keep it in the password
 manager, then `scripts/seal-demo-tokens.sh NAME...` (hidden prompt) hashes it
-and seals only the hash. Revoke by deleting the key from the file; the mount
-refreshes in about a minute, with no restart.
+and seals only the hash. Revoke by deleting the key from the file: after the
+merge, ArgoCD syncs within 1 to 5 minutes (it polls the repo), then the mount
+refreshes within about a minute of the sync (3 to 16 s measured; four merges
+in demo #218), with no restart.
 
 **Cloudflare tokens** (ADR 0020): cert-manager and external-dns each have
 their own token (Zone:DNS:Edit and Zone:Zone:Read on `sandeeprn.in` only).
