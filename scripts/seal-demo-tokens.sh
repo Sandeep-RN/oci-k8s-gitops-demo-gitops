@@ -25,8 +25,10 @@
 #
 # Adding or rotating a token re-seals only the names given (kubeseal
 # --merge-into); the other tokens are kept as they are. To REVOKE a token,
-# delete its line under spec.encryptedData and merge the PR: the kubelet
-# refreshes the mounted Secret within about a minute, with no restart.
+# delete its line under spec.encryptedData and merge the PR. Measured on the live
+# cluster (demo #218, 2026-11-23, four merges): ArgoCD synced 1 to 5 minutes after
+# the merge (61 to 302 s; it polls the repo), then the kubelet refreshed the
+# mounted Secret within about a minute of the sync (3 to 16 s), with no restart.
 #
 # Sealing needs no cluster access: it uses this cluster's public certificate.
 #
@@ -125,6 +127,8 @@ mv "$sealed" "$out"
 
 # The overlay lists the file under resources. Not appended here: that file ends
 # with patches, so a line added at the end would land in the wrong list.
-grep -qx "  - ${entry}" "$kust" || echo "warning: ${entry} is not in ${kust#"$repo"/} resources" >&2
+# A trailing comment or spaces after the name are fine (demo #224: a whole-line match
+# warned about a file that was listed). The dot in the name is matched literally.
+grep -Eq "^[[:space:]]+-[[:space:]]+${entry//./[.]}[[:space:]]*(#.*)?\$" "$kust" || echo "warning: ${entry} is not in ${kust#"$repo"/} resources" >&2
 echo "Sealed $# demo token hash(es) -> ${out#"$repo"/}. Review the diff, then commit it."
 echo "Give each token's value to its holder; the cluster never sees it."
