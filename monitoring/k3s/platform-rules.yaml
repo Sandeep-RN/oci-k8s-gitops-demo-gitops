@@ -1,0 +1,150 @@
+# Platform alerts for the single k3s node (demo #140): certificates, the edge,
+# and the node's disk. The redirect SLO and the Postgres backup alerts live
+# with the app (apps/link-shortener/base/slo-rules.yaml); the generic Kubernetes
+# alerts come from the kube-prometheus-stack chart.
+#
+# Routing (monitoring/kube-prometheus-stack/values.yaml): critical and warning
+# both go to Discord, severity=info goes nowhere. So "critical" here means "wake
+# me", "warning" means "look today". A critical and a warning alert with the
+# same alertname in the same namespace are one problem at two levels: the
+# critical one inhibits the warning one in Alertmanager.
+#
+# Tests: tests/prometheus/platform-alerts.test.yaml (promtool, run in CI).
+# Names are used by CI (amtool routes) and the runbooks; rename with care.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-alerts
+spec:
+  groups:
+    - name: cert-manager
+      rules:
+        # cert-manager renews a Let's Encrypt certificate (90 days) 30 days
+        # before it expires. A certificate with less than 14 days left therefore
+        # means renewal has failed for more than two weeks; 7 days is the point
+        # where the browser warning is close. The value is the seconds left.
+        - alert: CertificateExpiringSoon
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) < 7 * 24 * 3600
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: Certificate {{ $labels.name }} expires in less than 7 days.
+            description: "Certificate {{ $labels.name }} in namespace {{ $labels.namespace }} has {{ $value | humanizeDuration }} left. cert-manager should have renewed it weeks ago: check the Certificate, its Order and Challenge, and the Cloudflare token."
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+        - alert: CertificateExpiringSoon
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) < 14 * 24 * 3600
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: Certificate {{ $labels.name }} expires in less than 14 days.
+            description: "Certificate {{ $labels.name }} in namespace {{ $labels.namespace }} has {{ $value | humanizeDuration }} left. cert-manager renews 30 days before expiry, so a renewal is failing: check the Certificate, its Order and Challenge, and the Cloudflare token."
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+
+        # Ready=False or Unknown. A first issuance (DNS-01) takes a few minutes
+        # and a renewal leaves Ready=True, so an hour of not being ready is a
+        # real problem.
+        - alert: CertificateNotReady
+          expr: certmanager_certificate_ready_status{condition=~"False|Unknown"} == 1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: Certificate {{ $labels.name }} is not Ready.
+            description: "Certificate {{ $labels.name }} in namespace {{ $labels.namespace }} has been Ready={{ $labels.condition }} for an hour. Check `kubectl describe certificate` and its CertificateRequest and Order."
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+
+        # The two alerts above read nothing if the scrape disappears (a deleted
+        # ServiceMonitor, a renamed Service label): an empty result is not an
+        # alert. This one makes that failure loud. 1 h covers a rebuild, when
+        # certificates only appear once the first issuance is done.
+        - alert: CertManagerMetricsMissing
+          expr: absent(certmanager_certificate_expiration_timestamp_seconds)
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: No cert-manager certificate metrics in Prometheus.
+            description: The certificate alerts cannot fire without these series. Check the cert-manager ServiceMonitor (monitoring/k3s/cert-manager-servicemonitor.yaml in the gitops repo) and the Prometheus targets page.
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+
+    - name: edge
+      rules:
+        # Server errors as Traefik sees them on the HTTPS entrypoint, for every
+        # service behind it. This catches what the app's own metrics cannot see:
+        # Traefik answering 502/503/504 itself (no ready backend, a refused
+        # connection), and any 5xx of the second app. The redirect SLO
+        # (slo-rules.yaml) pages for the link shortener's own 5xx, so this is a
+        # warning: it adds coverage and does not double-page.
+        # 5 % over 10 minutes, with at least 20 requests in that window: with
+        # demo-level traffic one failed request in a handful is noise (same
+        # traffic floor as the SLO alerts). The floor is also the blind spot: a
+        # total outage with fewer than 20 requests in 10 minutes is caught by
+        # the synthetic probe (RedirectProbeNoAnswer), not here.
+        - alert: TraefikServerErrorsHigh
+          expr: |
+            (
+              sum(rate(traefik_entrypoint_requests_total{entrypoint="websecure",code=~"5.."}[10m]))
+              /
+              sum(rate(traefik_entrypoint_requests_total{entrypoint="websecure"}[10m]))
+            ) > 0.05
+            and
+            sum(increase(traefik_entrypoint_requests_total{entrypoint="websecure"}[10m])) >= 20
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: More than 5% of requests at the edge are failing with a 5xx.
+            description: "{{ $value | humanizePercentage }} of HTTPS requests answered 5xx over the last 10 minutes. Check which service: traefik_service_requests_total by exported_service and code, then that service's pods."
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#traefik-server-errors
+
+        # Same idea as CertManagerMetricsMissing: no healthy Traefik target
+        # means the alert above and the dashboard's edge panel read nothing.
+        # 10 m rides out a Traefik restart.
+        - alert: TraefikMetricsMissing
+          expr: absent(up{job="traefik-metrics"} == 1)
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Prometheus cannot scrape Traefik.
+            description: No healthy traefik-metrics target. Either Traefik is down (the probe alerts will say so) or its ServiceMonitor or metrics Service is gone (edge/traefik-k3s in the gitops repo).
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#traefik-server-errors
+
+    - name: node-disk
+      rules:
+        # The node's one 50 GB disk holds the OS, container images, Postgres and
+        # Prometheus (local-path volumes are plain host directories). The chart's
+        # stock alerts (NodeFilesystemAlmostOutOfSpace) fire at 5 % and 3 % free,
+        # which is where the kubelet starts evicting pods, so they are the last
+        # line, not an early warning. These fire earlier, on the root
+        # filesystem only (/boot and /boot/efi are small and static).
+        # Not a per-volume alert: on local-path, kubelet_volume_stats_* reports
+        # the host disk for every PVC (measured 2026-11-23: all three PVCs show the
+        # same 50.9 GB capacity and the same usage), so the chart's
+        # KubePersistentVolumeFillingUp would say the same as this does.
+        - alert: NodeRootDiskLow
+          expr: |
+            node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}
+            < 0.12
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: The node's root disk has less than 12% free.
+            description: "Only {{ $value | humanizePercentage }} of the root disk is free. Image garbage collection and pod eviction start around here. Find what grew: Prometheus data, Postgres, container images, logs."
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/k3s-node.md#disk-space-low
+        - alert: NodeRootDiskLow
+          expr: |
+            node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}
+            < 0.20
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: The node's root disk has less than 20% free.
+            description: "Only {{ $value | humanizePercentage }} of the root disk is free. Find what grew before it becomes an eviction: Prometheus data, Postgres, container images, logs."
+            runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/k3s-node.md#disk-space-low
