@@ -1,0 +1,303 @@
+# promtool unit tests for monitoring/k3s/platform-rules.yaml (demo #140).
+# CI extracts the PrometheusRule's .spec to platform.rules.yaml next to this file.
+# promtool's clock starts at 0, so a certificate expiry of 1216800 means "14 days
+# and 2 hours after test start".
+#
+# Series use a 5 m interval, the same as the evaluation interval: a series with
+# gaps wider than the 5 m lookback goes stale between samples, and the `for:`
+# clock of an alert resets every time its series disappears.
+rule_files:
+  - platform.rules.yaml
+
+evaluation_interval: 5m
+
+tests:
+  # ---- Certificates -------------------------------------------------------
+  # Expires 14 d 2 h after start. Warning once under 14 d left (for 1 h), critical
+  # once under 7 d left (for 15 m). 171 h in, 6 d 23 h are left: both fire.
+  - interval: 5m
+    input_series:
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="demo-tls",namespace="link-shortener"}'
+        values: '1216800x2100'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: CertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 4h
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              name: demo-tls
+              namespace: link-shortener
+            exp_annotations:
+              summary: Certificate demo-tls expires in less than 14 days.
+              description: "Certificate demo-tls in namespace link-shortener has 13d 22h 0m 0s left. cert-manager renews 30 days before expiry, so a renewal is failing: check the Certificate, its Order and Challenge, and the Cloudflare token."
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+      - eval_time: 171h
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              name: demo-tls
+              namespace: link-shortener
+            exp_annotations:
+              summary: Certificate demo-tls expires in less than 7 days.
+              description: "Certificate demo-tls in namespace link-shortener has 6d 23h 0m 0s left. cert-manager should have renewed it weeks ago: check the Certificate, its Order and Challenge, and the Cloudflare token."
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+          - exp_labels:
+              severity: warning
+              name: demo-tls
+              namespace: link-shortener
+            exp_annotations:
+              summary: Certificate demo-tls expires in less than 14 days.
+              description: "Certificate demo-tls in namespace link-shortener has 6d 23h 0m 0s left. cert-manager renews 30 days before expiry, so a renewal is failing: check the Certificate, its Order and Challenge, and the Cloudflare token."
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+
+  # A renewal (the expiry jumps to 90 d) 50 minutes into the warning's `for:` window
+  # resets it: nothing fires.
+  - interval: 5m
+    input_series:
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="demo-tls",namespace="link-shortener"}'
+        values: '1216800x35 7776000x2065'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: CertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 100h
+        alertname: CertificateExpiringSoon
+        exp_alerts: []
+
+  # Ready=False for an hour fires; Ready=True with the other conditions at 0 does not.
+  - interval: 5m
+    input_series:
+      - series: 'certmanager_certificate_ready_status{condition="False",name="demo-tls",namespace="link-shortener"}'
+        values: '1x180'
+      - series: 'certmanager_certificate_ready_status{condition="True",name="demo-tls",namespace="link-shortener"}'
+        values: '0x180'
+      - series: 'certmanager_certificate_ready_status{condition="Unknown",name="demo-tls",namespace="link-shortener"}'
+        values: '0x180'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CertificateNotReady
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: CertificateNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              condition: "False"
+              name: demo-tls
+              namespace: link-shortener
+            exp_annotations:
+              summary: Certificate demo-tls is not Ready.
+              description: "Certificate demo-tls in namespace link-shortener has been Ready=False for an hour. Check `kubectl describe certificate` and its CertificateRequest and Order."
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+  - interval: 5m
+    input_series:
+      - series: 'certmanager_certificate_ready_status{condition="False",name="demo-tls",namespace="link-shortener"}'
+        values: '0x180'
+      - series: 'certmanager_certificate_ready_status{condition="True",name="demo-tls",namespace="link-shortener"}'
+        values: '1x180'
+      - series: 'certmanager_certificate_ready_status{condition="Unknown",name="demo-tls",namespace="link-shortener"}'
+        values: '0x180'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: CertificateNotReady
+        exp_alerts: []
+
+  # No certificate series at all (the scrape is gone): quiet for the first hour, then fires.
+  - interval: 5m
+    input_series:
+      - series: 'up{job="something-else"}'
+        values: '1x180'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CertManagerMetricsMissing
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: CertManagerMetricsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: No cert-manager certificate metrics in Prometheus.
+              description: The certificate alerts cannot fire without these series. Check the cert-manager ServiceMonitor (monitoring/k3s/cert-manager-servicemonitor.yaml in the gitops repo) and the Prometheus targets page.
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#certificate-expiring-soon
+  - interval: 5m
+    input_series:
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="demo-tls",namespace="link-shortener"}'
+        values: '7776000x180'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: CertManagerMetricsMissing
+        exp_alerts: []
+
+  # ---- Edge ---------------------------------------------------------------
+  # 3 OK + 1 failing request a minute on the HTTPS entrypoint: 25 % for 10 m, 40
+  # requests in the window.
+  - interval: 1m
+    input_series:
+      - series: 'traefik_entrypoint_requests_total{entrypoint="websecure",code="200"}'
+        values: '0+3x60'
+      - series: 'traefik_entrypoint_requests_total{entrypoint="websecure",code="502"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: TraefikServerErrorsHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: TraefikServerErrorsHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: More than 5% of requests at the edge are failing with a 5xx.
+              description: "25% of HTTPS requests answered 5xx over the last 10 minutes. Check which service: traefik_service_requests_total by exported_service and code, then that service's pods."
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#traefik-server-errors
+
+  # A 33 % error ratio on 15 requests per 10 minutes is under the traffic floor: no alert.
+  - interval: 1m
+    input_series:
+      - series: 'traefik_entrypoint_requests_total{entrypoint="websecure",code="200"}'
+        values: '0+1x60'
+      - series: 'traefik_entrypoint_requests_total{entrypoint="websecure",code="502"}'
+        values: '0+0.5x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: TraefikServerErrorsHigh
+        exp_alerts: []
+
+  # 5xx on the plain-HTTP entrypoint do not count; healthy HTTPS traffic with a flat 5xx counter does not fire.
+  - interval: 1m
+    input_series:
+      - series: 'traefik_entrypoint_requests_total{entrypoint="websecure",code="200"}'
+        values: '0+3x60'
+      - series: 'traefik_entrypoint_requests_total{entrypoint="websecure",code="500"}'
+        values: '0x60'
+      - series: 'traefik_entrypoint_requests_total{entrypoint="web",code="500"}'
+        values: '0+3x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: TraefikServerErrorsHigh
+        exp_alerts: []
+
+  # Traefik's target is healthy: quiet. Target down, or no target at all: fires after 10 m.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="traefik-metrics"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: TraefikMetricsMissing
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'up{job="traefik-metrics"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TraefikMetricsMissing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: TraefikMetricsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations: &traefik-missing
+              summary: Prometheus cannot scrape Traefik.
+              description: No healthy traefik-metrics target. Either Traefik is down (the probe alerts will say so) or its ServiceMonitor or metrics Service is gone (edge/traefik-k3s in the gitops repo).
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/edge.md#traefik-server-errors
+  - interval: 1m
+    input_series:
+      - series: 'up{job="something-else"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: TraefikMetricsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations: *traefik-missing
+
+  # ---- Node disk ----------------------------------------------------------
+  # 15 % free on /: the warning fires after 30 m, the critical (under 12 %) does not.
+  # 10 % free: both fire (the critical after 10 m). 30 % free, or a nearly full /boot: neither.
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_size_bytes{job="node-exporter",mountpoint="/",fstype="ext4",device="/dev/sda1"}'
+        values: '100x60'
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype="ext4",device="/dev/sda1"}'
+        values: '15x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: NodeRootDiskLow
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: NodeRootDiskLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: node-exporter
+              mountpoint: /
+              fstype: ext4
+              device: /dev/sda1
+            exp_annotations:
+              summary: The node's root disk has less than 20% free.
+              description: "Only 15% of the root disk is free. Find what grew before it becomes an eviction: Prometheus data, Postgres, container images, logs."
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/k3s-node.md#disk-space-low
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_size_bytes{job="node-exporter",mountpoint="/",fstype="ext4",device="/dev/sda1"}'
+        values: '100x60'
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype="ext4",device="/dev/sda1"}'
+        values: '10x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: NodeRootDiskLow
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: node-exporter
+              mountpoint: /
+              fstype: ext4
+              device: /dev/sda1
+            exp_annotations:
+              summary: The node's root disk has less than 12% free.
+              description: "Only 10% of the root disk is free. Image garbage collection and pod eviction start around here. Find what grew: Prometheus data, Postgres, container images, logs."
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/k3s-node.md#disk-space-low
+          - exp_labels:
+              severity: warning
+              job: node-exporter
+              mountpoint: /
+              fstype: ext4
+              device: /dev/sda1
+            exp_annotations:
+              summary: The node's root disk has less than 20% free.
+              description: "Only 10% of the root disk is free. Find what grew before it becomes an eviction: Prometheus data, Postgres, container images, logs."
+              runbook_url: https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/k3s-node.md#disk-space-low
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_size_bytes{job="node-exporter",mountpoint="/",fstype="ext4",device="/dev/sda1"}'
+        values: '100x60'
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype="ext4",device="/dev/sda1"}'
+        values: '30x60'
+      - series: 'node_filesystem_size_bytes{job="node-exporter",mountpoint="/boot",fstype="ext4",device="/dev/sda16"}'
+        values: '100x60'
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",mountpoint="/boot",fstype="ext4",device="/dev/sda16"}'
+        values: '5x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: NodeRootDiskLow
+        exp_alerts: []
+  # Disk freed after 25 minutes (15 % then 50 %): the warning's 30 m clock resets, nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_size_bytes{job="node-exporter",mountpoint="/",fstype="ext4",device="/dev/sda1"}'
+        values: '100x60'
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype="ext4",device="/dev/sda1"}'
+        values: '15x25 50x35'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: NodeRootDiskLow
+        exp_alerts: []

@@ -1,0 +1,45 @@
+# Scrapes cert-manager's controller so Prometheus has the certificate series
+# (certmanager_certificate_expiration_timestamp_seconds, ..._ready_status) that
+# the CertificateExpiringSoon and CertificateNotReady alerts in
+# platform-rules.yaml read (demo #140).
+#
+# Why here and not through the chart (prometheus.servicemonitor.enabled): the
+# chart would render the ServiceMonitor inside the cert-manager Application,
+# which syncs in wave -1 next to the monitoring Application that installs the
+# ServiceMonitor CRD, so a fresh bootstrap could fail on a missing CRD. This
+# file is part of the monitoring Application, which skips the missing-CRD dry
+# run and retries (argocd/clusters/k3s/apps/monitoring.yaml). Same reasoning as
+# edge/traefik-k3s/servicemonitor.yaml.
+#
+# The kustomization's `namespace: monitoring` puts this object in the
+# monitoring namespace; namespaceSelector below still finds the Service in
+# cert-manager (Prometheus selects ServiceMonitors from every namespace).
+#
+# The labels below are the controller Service's, from the pinned chart. CI
+# checks them against the rendered chart, so a chart bump that renames a label
+# fails there and does not silently stop the scrape.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+spec:
+  jobLabel: app.kubernetes.io/name
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/instance: cert-manager
+      app.kubernetes.io/component: controller
+  namespaceSelector:
+    matchNames:
+      - cert-manager
+  endpoints:
+    - port: http-metrics
+      path: /metrics
+      # Certificates change over days, not seconds.
+      interval: 60s
+      # Every certificate series carries the Certificate's own `namespace`
+      # label. Without this, Prometheus would rename it to exported_namespace
+      # and put cert-manager's namespace in its place, and alerts would be
+      # grouped (and inhibited) under "cert-manager" instead of the namespace
+      # that owns the certificate.
+      honorLabels: true

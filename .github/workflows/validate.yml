@@ -209,8 +209,55 @@ jobs:
           # A PrometheusRule's .spec is a plain Prometheus rules file. Extract it
           # so promtool can lint it and run the unit tests next to it.
           yq '.spec' apps/link-shortener/base/slo-rules.yaml > tests/prometheus/slo-redirect.rules.yaml
-          ./promtool check rules tests/prometheus/slo-redirect.rules.yaml
+          yq '.spec' monitoring/k3s/platform-rules.yaml > tests/prometheus/platform.rules.yaml
+          ./promtool check rules tests/prometheus/slo-redirect.rules.yaml tests/prometheus/platform.rules.yaml
           ./promtool test rules tests/prometheus/*.test.yaml
+
+      # Demo #140: the platform alerts exist with the severities the routing
+      # contract expects, each with a `for:` and a runbook link, and the
+      # cert-manager ServiceMonitor still selects the controller Service that
+      # the pinned chart renders. promtool above proves what each rule does;
+      # this proves a rule cannot be deleted or renamed, or its scrape quietly
+      # broken, while CI stays green (an empty alert result is not an alert).
+      - name: Assert platform alerts and the cert-manager scrape (demo #140)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail() { echo "FAIL: $*"; exit 1; }
+          out=$(kubectl kustomize monitoring/k3s)
+          rule='select(.kind == "PrometheusRule" and .metadata.name == "platform-alerts")'
+          [ -n "$(yq "${rule} | .metadata.name" <<<"$out")" ] || fail "monitoring/k3s: PrometheusRule platform-alerts is not rendered"
+          for pair in "CertificateExpiringSoon critical" "CertificateExpiringSoon warning" \
+                      "CertificateNotReady warning" "CertManagerMetricsMissing warning" \
+                      "TraefikServerErrorsHigh warning" "TraefikMetricsMissing warning" \
+                      "NodeRootDiskLow critical" "NodeRootDiskLow warning"; do
+            read -r name sev <<<"$pair"
+            # One line per matching rule (yq prints once per match, nothing for no match).
+            sel=".spec.groups[].rules[] | select(.alert == \"${name}\" and .labels.severity == \"${sev}\")"
+            n=$(yq "${rule} | ${sel} | .alert" <<<"$out" | wc -l | tr -d ' ')
+            [ "$n" = "1" ] || fail "alert ${name} (${sev}): expected exactly one rule, found ${n}"
+            [ -n "$(yq "${rule} | ${sel} | .for // \"\"" <<<"$out")" ] || fail "alert ${name} (${sev}): no for: duration"
+            yq "${rule} | ${sel} | .annotations.runbook_url // \"\"" <<<"$out" \
+              | grep -q '^https://github.com/Sandeep-RN/oci-k8s-gitops-demo/blob/main/docs/runbooks/' \
+              || fail "alert ${name} (${sev}): runbook_url missing or not a demo runbook link"
+          done
+          # The scrape: a ServiceMonitor for the cert-manager controller that keeps the
+          # Certificate's own namespace label, matching the rendered chart's Service.
+          sm='select(.kind == "ServiceMonitor" and .metadata.name == "cert-manager")'
+          [ -n "$(yq "${sm} | .metadata.name" <<<"$out")" ] || fail "monitoring/k3s: ServiceMonitor cert-manager is not rendered"
+          [ "$(yq "${sm} | .spec.endpoints[0].honorLabels" <<<"$out")" = "true" ] || fail "cert-manager ServiceMonitor: honorLabels is not true (alerts would be grouped under the cert-manager namespace)"
+          [ "$(yq "${sm} | .spec.namespaceSelector.matchNames[0]" <<<"$out")" = "cert-manager" ] || fail "cert-manager ServiceMonitor: namespaceSelector is not cert-manager"
+          port=$(yq "${sm} | .spec.endpoints[0].port" <<<"$out")
+          files=(rendered/*-cert-manager.yaml)
+          [ ${#files[@]} -gt 0 ] || fail "no rendered cert-manager chart found"
+          svc='select(.kind == "Service" and .metadata.name == "cert-manager")'
+          for f in "${files[@]}"; do
+            while read -r k v; do
+              [ "$(yq "${svc} | .metadata.labels[\"${k}\"]" "$f")" = "$v" ] || fail "${f}: Service cert-manager has no label ${k}=${v}, which the ServiceMonitor selects"
+            done < <(yq "${sm} | .spec.selector.matchLabels | to_entries | .[] | .key + \" \" + .value" <<<"$out")
+            [ -n "$(yq "${svc} | .spec.ports[] | select(.name == \"${port}\") | .port" "$f")" ] || fail "${f}: Service cert-manager has no port named '${port}'"
+          done
+          echo "ok"
 
       # A broken Alertmanager config is silent (the operator rejects it and no
       # alert is sent), so check the rendered config and its routing here.
@@ -239,6 +286,10 @@ jobs:
             expect null alertname=CPUThrottlingHigh severity=info
             expect discord alertname=RedirectErrorBudgetBurnFast severity=critical
             expect discord alertname=KubePodNotReady severity=warning
+            expect discord alertname=CertificateExpiringSoon severity=critical
+            expect discord alertname=CertificateExpiringSoon severity=warning
+            expect discord alertname=TraefikServerErrorsHigh severity=warning
+            expect discord alertname=NodeRootDiskLow severity=critical
             echo "::endgroup::"
           done
 
