@@ -16,4 +16,6 @@ resources:
   - alertmanager-discord-sealedsecret.yaml
   # Platform alerts and the cert-manager scrape they need (demo #140).
   - cert-manager-servicemonitor.yaml
+  # Argo CD sync/health for the demo site's status strip (demo #230).
+  - argocd-servicemonitor.yaml
   - platform-rules.yaml

@@ -69,6 +69,13 @@ spec:
               value: token
             - name: LINK_TOKENS_DIR
               value: /etc/link-shortener/tokens
+            # Turns on GET /api/status and the live strip on the landing page
+            # (demo #230, ADR 0026). Unset = the feature is off. Here and not in
+            # the app-config ConfigMap on purpose: envFrom does not restart pods
+            # when a ConfigMap changes, but a changed pod template rolls them.
+            # In-cluster, read-only, no credentials: Prometheus has none.
+            - name: STATUS_PROMETHEUS_URL
+              value: http://kps-prometheus.monitoring.svc:9090
           volumeMounts:
             # The whole Secret, one file per token. Never use subPath here: a
             # subPath mount is never updated, so a revoked token would keep
