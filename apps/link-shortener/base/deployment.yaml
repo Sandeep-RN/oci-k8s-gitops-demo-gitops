@@ -76,6 +76,12 @@ spec:
             # In-cluster, read-only, no credentials: Prometheus has none.
             - name: STATUS_PROMETHEUS_URL
               value: http://kps-prometheus.monitoring.svc:9090
+            # Turns on the /status history charts (demo #235, ADR 0027). Needs the
+            # variable above. Unset or anything but "on" = /status is a 404. Here
+            # and not in the ConfigMap for the same reason: a changed pod template
+            # rolls the pods, a ConfigMap edit does not.
+            - name: STATUS_HISTORY
+              value: "on"
           volumeMounts:
             # The whole Secret, one file per token. Never use subPath here: a
             # subPath mount is never updated, so a revoked token would keep
