@@ -16,7 +16,9 @@ jobs:
       KUBECONFORM_VERSION: v0.8.0
       # sha256 of kubeconform-linux-amd64.tar.gz from the release's CHECKSUMS file
       KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
-      K8S_VERSION: 1.31.0
+      # The version the node runs (demo repo, terraform/k3s `k3s_version`,
+      # without the +k3s suffix). Change both together after a k3s upgrade.
+      K8S_VERSION: 1.36.5
       HELM_VERSION: v4.3.0
       # sha256 of helm-<version>-linux-amd64.tar.gz from get.helm.sh
       HELM_SHA256: 86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
